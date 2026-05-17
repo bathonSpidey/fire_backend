@@ -1,11 +1,10 @@
 """
 Fake implementations of all domain interfaces.
 Hand-rolled, no mocking library — Uncle Bob style.
-These live in tests/ and are never imported by production code.
 """
 
 import hashlib
-from datetime import date as Date  # noqa: N812
+from datetime import date as Date
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -14,11 +13,13 @@ from src.fire.domain.entities.account import Account
 from src.fire.domain.entities.budget_insight import BudgetInsight
 from src.fire.domain.entities.document import Document
 from src.fire.domain.entities.transaction import Transaction, TransactionCategory
+from src.fire.domain.entities.user import User
 from src.fire.domain.interfaces.repositories import (
     IAccountRepository,
     IDocumentRepository,
     IInsightRepository,
     ITransactionRepository,
+    IUserRepository,
 )
 from src.fire.domain.interfaces.services import (
     ExtractionResult,
@@ -26,6 +27,21 @@ from src.fire.domain.interfaces.services import (
     ILLMDocumentParser,
     ILLMInsightGenerator,
 )
+
+
+class FakeUserRepository(IUserRepository):
+    def __init__(self) -> None:
+        self._store: dict[UUID, User] = {}
+
+    async def save(self, user: User) -> User:
+        self._store[user.id] = user
+        return user
+
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        return self._store.get(user_id)
+
+    async def list_all(self) -> list[User]:
+        return list(self._store.values())
 
 
 class FakeDocumentRepository(IDocumentRepository):
@@ -42,8 +58,9 @@ class FakeDocumentRepository(IDocumentRepository):
     async def get_by_hash(self, file_hash: str) -> Document | None:
         return next((d for d in self._store.values() if d.file_hash == file_hash), None)
 
-    async def list_all(self, limit: int = 50, offset: int = 0) -> list[Document]:
-        return list(self._store.values())[offset : offset + limit]
+    async def list_by_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[Document]:
+        results = [d for d in self._store.values() if d.user_id == user_id]
+        return results[offset : offset + limit]
 
     async def update(self, document: Document) -> Document:
         self._store[document.id] = document
@@ -69,16 +86,25 @@ class FakeTransactionRepository(ITransactionRepository):
     async def get_by_document(self, document_id: UUID) -> list[Transaction]:
         return [t for t in self._store.values() if t.document_id == document_id]
 
-    async def get_by_month(self, year: int, month: int) -> list[Transaction]:
-        return [t for t in self._store.values() if t.date.year == year and t.date.month == month]
+    async def get_by_user_and_month(
+        self, user_id: UUID, year: int, month: int
+    ) -> list[Transaction]:
+        return [
+            t
+            for t in self._store.values()
+            if t.user_id == user_id and t.date.year == year and t.date.month == month
+        ]
 
     async def get_by_category(
         self,
+        user_id: UUID,
         category: TransactionCategory,
         from_date: Date | None = None,
         to_date: Date | None = None,
     ) -> list[Transaction]:
-        results = [t for t in self._store.values() if t.category == category]
+        results = [
+            t for t in self._store.values() if t.user_id == user_id and t.category == category
+        ]
         if from_date:
             results = [t for t in results if t.date >= from_date]
         if to_date:
@@ -97,8 +123,8 @@ class FakeAccountRepository(IAccountRepository):
     async def get_by_id(self, account_id: UUID) -> Account | None:
         return self._store.get(account_id)
 
-    async def list_active(self) -> list[Account]:
-        return [a for a in self._store.values() if a.is_active]
+    async def list_by_user(self, user_id: UUID) -> list[Account]:
+        return [a for a in self._store.values() if a.user_id == user_id and a.is_active]
 
     async def update(self, account: Account) -> Account:
         self._store[account.id] = account
@@ -107,17 +133,20 @@ class FakeAccountRepository(IAccountRepository):
 
 class FakeInsightRepository(IInsightRepository):
     def __init__(self) -> None:
-        self._store: dict[tuple[int, int], BudgetInsight] = {}
+        self._store: dict[tuple[UUID, int, int], BudgetInsight] = {}
 
     async def save(self, insight: BudgetInsight) -> BudgetInsight:
-        self._store[(insight.year, insight.month)] = insight
+        self._store[(insight.user_id, insight.year, insight.month)] = insight
         return insight
 
-    async def get_by_month(self, year: int, month: int) -> BudgetInsight | None:
-        return self._store.get((year, month))
+    async def get_by_user_and_month(
+        self, user_id: UUID, year: int, month: int
+    ) -> BudgetInsight | None:
+        return self._store.get((user_id, year, month))
 
-    async def list_all(self, limit: int = 12) -> list[BudgetInsight]:
-        return list(self._store.values())[-limit:]
+    async def list_by_user(self, user_id: UUID, limit: int = 12) -> list[BudgetInsight]:
+        results = [i for i in self._store.values() if i.user_id == user_id]
+        return results[-limit:]
 
 
 class FakeFileStorage(IFileStorage):
@@ -125,8 +154,7 @@ class FakeFileStorage(IFileStorage):
         self._store: dict[Path, bytes] = {}
 
     async def save(self, filename: str, content: bytes, upload_date: Date) -> Path:
-        folder = self.daily_folder(upload_date)
-        path = folder / filename
+        path = self.daily_folder(upload_date) / filename
         self._store[path] = content
         return path
 
@@ -146,11 +174,6 @@ class FakeFileStorage(IFileStorage):
 
 
 class FakeLLMDocumentParser(ILLMDocumentParser):
-    """
-    Controllable fake — tests set .result before calling parse().
-    Tracks call count so tests can assert the LLM was (or wasn't) called.
-    """
-
     def __init__(self, result: ExtractionResult | None = None) -> None:
         self.result = result
         self.call_count = 0
@@ -167,11 +190,7 @@ class FakeLLMDocumentParser(ILLMDocumentParser):
 
 
 class FakeLLMInsightGenerator(ILLMInsightGenerator):
-    def __init__(
-        self,
-        summary: str = "Test summary.",
-        tips: list[str] | None = None,
-    ) -> None:
+    def __init__(self, summary: str = "Test summary.", tips: list[str] | None = None) -> None:
         self.summary = summary
         self.tips = tips or ["Tip one.", "Tip two."]
         self.call_count = 0

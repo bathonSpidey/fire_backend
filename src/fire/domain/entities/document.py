@@ -20,24 +20,21 @@ class DocumentStatus(StrEnum):
 
 @dataclass
 class Document:
-    """
-    Represents an uploaded financial document (PDF or image).
-    This is a pure domain entity — no ORM, no framework dependencies.
-    """
-
     id: UUID
+    user_id: UUID
     filename: str
     file_path: str
     document_type: DocumentType
     status: DocumentStatus
     uploaded_at: datetime
+    file_hash: str = ""
     processed_at: datetime | None = None
     error_message: str | None = None
-    file_hash: str = ""
 
     @classmethod
     def create(
         cls,
+        user_id: UUID,
         filename: str,
         file_path: str,
         file_hash: str,
@@ -45,6 +42,7 @@ class Document:
     ) -> "Document":
         return cls(
             id=uuid4(),
+            user_id=user_id,
             filename=filename,
             file_path=file_path,
             file_hash=file_hash,

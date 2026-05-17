@@ -1,18 +1,21 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
+from uuid import UUID
 
-from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
-from src.fire.domain.interfaces.repositories import ITransactionRepository
+from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from fire.domain.interfaces.repositories import ITransactionRepository
 
 
 @dataclass
 class GetMonthlySummaryRequest:
+    user_id: UUID
     year: int
     month: int
 
 
 @dataclass
 class MonthlySummary:
+    user_id: UUID
     year: int
     month: int
     total_income: Decimal
@@ -24,17 +27,17 @@ class MonthlySummary:
 
 class GetMonthlySummary:
     """
-    Use case: aggregate all transactions for a given month into a
-    summary DTO. Pure calculation — no LLM, no file I/O.
-    This DTO is what GenerateInsights consumes.
+    Use case: aggregate all transactions for a given user and month.
+    Pure calculation — no LLM, no file I/O.
     """
 
     def __init__(self, transaction_repo: ITransactionRepository) -> None:
         self._transaction_repo = transaction_repo
 
     async def execute(self, request: GetMonthlySummaryRequest) -> MonthlySummary:
-        transactions = await self._transaction_repo.get_by_month(request.year, request.month)
-
+        transactions = await self._transaction_repo.get_by_user_and_month(
+            request.user_id, request.year, request.month
+        )
         total_income = Decimal("0")
         total_expenses = Decimal("0")
         category_totals: dict[TransactionCategory, Decimal] = {}
@@ -49,6 +52,7 @@ class GetMonthlySummary:
                 )
 
         return MonthlySummary(
+            user_id=request.user_id,
             year=request.year,
             month=request.month,
             total_income=total_income,

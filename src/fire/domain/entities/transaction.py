@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date as Date  # noqa: N812
+from datetime import date as Date
 from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
@@ -28,12 +28,8 @@ class TransactionCategory(StrEnum):
 
 @dataclass
 class Transaction:
-    """
-    A single financial transaction extracted from a document.
-    Amount is always positive; transaction_type distinguishes direction.
-    """
-
     id: UUID
+    user_id: UUID
     document_id: UUID
     account_id: UUID | None
     date: Date
@@ -48,6 +44,7 @@ class Transaction:
     @classmethod
     def create(
         cls,
+        user_id: UUID,
         document_id: UUID,
         date: Date,
         description: str,
@@ -61,6 +58,7 @@ class Transaction:
             raise ValueError("Amount must be non-negative. Use transaction_type for direction.")
         return cls(
             id=uuid4(),
+            user_id=user_id,
             document_id=document_id,
             account_id=account_id,
             date=date,
@@ -73,7 +71,6 @@ class Transaction:
 
     @property
     def signed_amount(self) -> Decimal:
-        """Positive for credits, negative for debits — useful for balance calculations."""
         if self.transaction_type == TransactionType.DEBIT:
             return -self.amount
         return self.amount

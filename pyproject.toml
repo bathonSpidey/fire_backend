@@ -24,6 +24,7 @@ dev = [
     "ruff>=0.15.13",
 ]
 
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
@@ -36,6 +37,16 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP"]
+ignore = [
+    "E501",  # Line too long (handled by black)
+    "F401",  # Unused imports (handled by mypy)
+    "F403",  # 'from module import *' used; unable to detect undefined names (handled by mypy)
+    "F405",  # Name may be undefined, or defined from star imports: module (handled by mypy)
+    "N802",  # Function name should be lowercase (we use camelCase for FastAPI endpoints)
+    "N803",  # Argument name should be lowercase (we use camelCase for FastAPI endpoints)
+    "N806",  # Variable in function should be lowercase (we use camelCase for FastAPI endpoints)
+    "N812",  # Lowercase 'date' imported as 'Date' (we do this to avoid conflicts with datetime.date)
+]
 
 [tool.mypy]
 python_version = "3.12"

@@ -11,14 +11,15 @@ from src.fire.domain.entities.transaction import Transaction, TransactionCategor
 
 from tests.fakes import FakeTransactionRepository
 
+USER_ID = uuid4()
+OTHER_USER_ID = uuid4()
 
-def _make_transaction(
-    amount: Decimal,
-    tx_type: TransactionType,
-    category: TransactionCategory,
-    tx_date: date,
+
+def _tx(
+    amount: Decimal, tx_type: TransactionType, category: TransactionCategory, tx_date: date
 ) -> Transaction:
     return Transaction.create(
+        user_id=USER_ID,
         document_id=uuid4(),
         date=tx_date,
         description="test",
@@ -39,105 +40,96 @@ def use_case(tx_repo: FakeTransactionRepository) -> GetMonthlySummary:
 
 
 async def test_summary_totals_income_correctly(
-    use_case: GetMonthlySummary,
-    tx_repo: FakeTransactionRepository,
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
     await tx_repo.save(
-        _make_transaction(
-            Decimal("3000"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 1)
-        )
+        _tx(Decimal("3000"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 1))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("500"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 15)
-        )
+        _tx(Decimal("500"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 15))
     )
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=1))
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
     assert result.total_income == Decimal("3500")
 
 
 async def test_summary_totals_expenses_correctly(
-    use_case: GetMonthlySummary,
-    tx_repo: FakeTransactionRepository,
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
     await tx_repo.save(
-        _make_transaction(
-            Decimal("200"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 5)
-        )
+        _tx(Decimal("200"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 5))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("50"), TransactionType.DEBIT, TransactionCategory.DINING, date(2024, 1, 10)
-        )
+        _tx(Decimal("50"), TransactionType.DEBIT, TransactionCategory.DINING, date(2024, 1, 10))
     )
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=1))
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
     assert result.total_expenses == Decimal("250")
 
 
 async def test_summary_groups_by_category(
-    use_case: GetMonthlySummary,
-    tx_repo: FakeTransactionRepository,
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
     await tx_repo.save(
-        _make_transaction(
-            Decimal("100"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 1)
-        )
+        _tx(Decimal("100"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 1))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("50"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 2)
-        )
+        _tx(Decimal("50"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 2))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("80"), TransactionType.DEBIT, TransactionCategory.DINING, date(2024, 1, 3)
-        )
+        _tx(Decimal("80"), TransactionType.DEBIT, TransactionCategory.DINING, date(2024, 1, 3))
     )
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=1))
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
     assert result.category_totals[TransactionCategory.GROCERIES] == Decimal("150")
     assert result.category_totals[TransactionCategory.DINING] == Decimal("80")
 
 
 async def test_summary_excludes_other_months(
-    use_case: GetMonthlySummary,
-    tx_repo: FakeTransactionRepository,
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
     await tx_repo.save(
-        _make_transaction(
-            Decimal("100"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 1)
-        )
+        _tx(Decimal("100"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 1))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("999"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 2, 1)
-        )
+        _tx(Decimal("999"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 2, 1))
     )
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=1))
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
     assert result.total_expenses == Decimal("100")
 
 
-async def test_summary_returns_zero_totals_for_empty_month(
-    use_case: GetMonthlySummary,
+async def test_summary_excludes_other_users(
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=6))
+    await tx_repo.save(
+        _tx(Decimal("100"), TransactionType.DEBIT, TransactionCategory.GROCERIES, date(2024, 1, 1))
+    )
+    other_tx = Transaction.create(
+        user_id=OTHER_USER_ID,
+        document_id=uuid4(),
+        date=date(2024, 1, 5),
+        description="other",
+        amount=Decimal("999"),
+        transaction_type=TransactionType.DEBIT,
+        category=TransactionCategory.GROCERIES,
+    )
+    await tx_repo.save(other_tx)
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
+    assert result.total_expenses == Decimal("100")
+
+
+async def test_summary_returns_zero_totals_for_empty_month(use_case: GetMonthlySummary) -> None:
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=6))
     assert result.total_income == Decimal("0")
     assert result.total_expenses == Decimal("0")
     assert result.transaction_count == 0
 
 
 async def test_summary_calculates_net_savings(
-    use_case: GetMonthlySummary,
-    tx_repo: FakeTransactionRepository,
+    use_case: GetMonthlySummary, tx_repo: FakeTransactionRepository
 ) -> None:
     await tx_repo.save(
-        _make_transaction(
-            Decimal("3000"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 1)
-        )
+        _tx(Decimal("3000"), TransactionType.CREDIT, TransactionCategory.INCOME, date(2024, 1, 1))
     )
     await tx_repo.save(
-        _make_transaction(
-            Decimal("1200"), TransactionType.DEBIT, TransactionCategory.HOUSING, date(2024, 1, 5)
-        )
+        _tx(Decimal("1200"), TransactionType.DEBIT, TransactionCategory.HOUSING, date(2024, 1, 5))
     )
-    result = await use_case.execute(GetMonthlySummaryRequest(year=2024, month=1))
+    result = await use_case.execute(GetMonthlySummaryRequest(user_id=USER_ID, year=2024, month=1))
     assert result.net_savings == Decimal("1800")

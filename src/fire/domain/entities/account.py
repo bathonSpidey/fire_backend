@@ -14,12 +14,8 @@ class AccountType(StrEnum):
 
 @dataclass
 class Account:
-    """
-    A financial account. Inferred from statements or manually created.
-    Balance here is the last known balance extracted from a statement.
-    """
-
     id: UUID
+    user_id: UUID
     name: str
     account_type: AccountType
     institution: str | None = None
@@ -30,6 +26,7 @@ class Account:
     @classmethod
     def create(
         cls,
+        user_id: UUID,
         name: str,
         account_type: AccountType,
         institution: str | None = None,
@@ -37,6 +34,7 @@ class Account:
     ) -> "Account":
         return cls(
             id=uuid4(),
+            user_id=user_id,
             name=name,
             account_type=account_type,
             institution=institution,

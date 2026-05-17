@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -6,8 +6,6 @@ from uuid import UUID, uuid4
 
 @dataclass
 class SpendingBreakdown:
-    """Per-category spend summary for a month."""
-
     category: str
     total: Decimal
     transaction_count: int
@@ -16,12 +14,8 @@ class SpendingBreakdown:
 
 @dataclass
 class BudgetInsight:
-    """
-    LLM-generated monthly financial insight.
-    Immutable once created — insights are a historical record.
-    """
-
     id: UUID
+    user_id: UUID
     year: int
     month: int
     total_income: Decimal
@@ -37,6 +31,7 @@ class BudgetInsight:
     @classmethod
     def create(
         cls,
+        user_id: UUID,
         year: int,
         month: int,
         total_income: Decimal,
@@ -54,6 +49,7 @@ class BudgetInsight:
         )
         return cls(
             id=uuid4(),
+            user_id=user_id,
             year=year,
             month=month,
             total_income=total_income,

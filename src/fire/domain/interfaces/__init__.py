@@ -3,10 +3,11 @@ from fire.domain.interfaces.repositories import (
     IDocumentRepository,
     IInsightRepository,
     ITransactionRepository,
+    IUserRepository,
 )
 from fire.domain.interfaces.services import (
-    ExtractionResult,
     ExtractedTransaction,
+    ExtractionResult,
     IFileStorage,
     ILLMDocumentParser,
     ILLMInsightGenerator,
@@ -17,6 +18,7 @@ __all__ = [
     "IDocumentRepository",
     "IInsightRepository",
     "ITransactionRepository",
+    "IUserRepository",
     "ExtractionResult",
     "ExtractedTransaction",
     "IFileStorage",

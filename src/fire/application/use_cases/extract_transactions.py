@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from src.fire.domain.entities.transaction import Transaction
-from src.fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
-from src.fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
+from fire.domain.entities.document import DocumentStatus
+from fire.domain.entities.transaction import Transaction
+from fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
+from fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
 
 
 @dataclass
@@ -15,11 +16,8 @@ class ExtractTransactionsRequest:
 
 class ExtractTransactions:
     """
-    Use case: read a stored document file, send to LLM parser,
-    map results to Transaction entities, persist them, and mark
-    the Document as processed (or failed).
-
-    Single Responsibility: extraction only — ingestion and insights are separate.
+    Use case: read a stored document, send to LLM parser,
+    map results to Transaction entities, persist them.
     """
 
     def __init__(
@@ -47,6 +45,7 @@ class ExtractTransactions:
             extraction = await self._llm_parser.parse(file_bytes, request.mime_type)
             transactions = [
                 Transaction.create(
+                    user_id=document.user_id,
                     document_id=document.id,
                     date=extracted.date,
                     description=extracted.description,
