@@ -56,7 +56,7 @@ class OllamaInsightGenerator(ILLMInsightGenerator):
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model: str = "mistral:7b-instruct",
+        model: str = "qwen3:14b-q4_K_M",
         timeout: float = 60.0,
     ) -> None:
         self._base_url = base_url

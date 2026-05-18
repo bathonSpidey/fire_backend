@@ -11,3 +11,4 @@ wheels/
 .python-version
 tests/integration/data/
 *.db
+.env
