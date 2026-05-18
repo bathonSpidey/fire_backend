@@ -19,17 +19,33 @@ class IngestDocumentRequest:
 
 class IngestDocument:
     """
-    Use case: accept a raw uploaded file, deduplicate it, persist it,
-    and return a Document entity ready for extraction.
+    Use case: accept a raw uploaded file, store it, and return a Document
+    entity ready for extraction.
+
+    If the same file (identical hash) was uploaded before, the existing
+    document is returned as-is — no duplicate created, no error raised.
+    This allows re-uploads without friction.
     """
 
-    def __init__(self, document_repo: IDocumentRepository, file_storage: IFileStorage) -> None:
+    def __init__(
+        self,
+        document_repo: IDocumentRepository,
+        file_storage: IFileStorage,
+    ) -> None:
         self._document_repo = document_repo
         self._file_storage = file_storage
 
-    async def execute(self, request: IngestDocumentRequest) -> Document:
+    async def execute(self, request: IngestDocumentRequest) -> tuple[Document, bool]:
+        """
+        Returns (document, is_new).
+        is_new=False means this exact file was already ingested — caller
+        can decide whether to re-extract or return the cached result.
+        """
         file_hash = await self._file_storage.compute_hash(request.content)
-        await self._reject_if_duplicate(file_hash)
+        existing = await self._document_repo.get_by_hash(file_hash)
+
+        if existing is not None:
+            return existing, False
 
         file_path = await self._file_storage.save(
             filename=request.filename,
@@ -43,9 +59,4 @@ class IngestDocument:
             file_hash=file_hash,
             document_type=request.document_type,
         )
-        return await self._document_repo.save(document)
-
-    async def _reject_if_duplicate(self, file_hash: str) -> None:
-        existing = await self._document_repo.get_by_hash(file_hash)
-        if existing is not None:
-            raise ValueError(f"duplicate: file already ingested as document {existing.id}")
+        return await self._document_repo.save(document), True

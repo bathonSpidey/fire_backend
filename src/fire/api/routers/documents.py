@@ -3,22 +3,23 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from src.fire.api.dependencies import (
+from fire.api.dependencies import (
     get_document_repo,
     get_file_storage,
     get_ingest_use_case,
     get_parser_factory,
     get_transaction_repo,
 )
-from src.fire.api.schemas.document import DocumentResponse, UploadResponse
-from src.fire.application.use_cases.extract_transactions import (
+from fire.api.schemas.document import DocumentResponse, UploadResponse
+from fire.application.use_cases.extract_transactions import (
     ExtractTransactions,
     ExtractTransactionsRequest,
 )
-from src.fire.application.use_cases.ingest_document import IngestDocument, IngestDocumentRequest
-from src.fire.domain.entities.document import Document, DocumentType
-from src.fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
-from src.fire.infrastructure.repositories.document_repository import DocumentRepository
+from fire.application.use_cases.ingest_document import IngestDocument, IngestDocumentRequest
+from fire.domain.entities.document import Document, DocumentType
+from fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
+from fire.infrastructure.repositories.document_repository import DocumentRepository
+from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -38,7 +39,7 @@ async def upload_document(
     ingest: IngestDocument = Depends(get_ingest_use_case),
     parser_factory: DocumentParserFactory = Depends(get_parser_factory),
     document_repo: DocumentRepository = Depends(get_document_repo),
-    transaction_repo=Depends(get_transaction_repo),
+    transaction_repo: TransactionRepository = Depends(get_transaction_repo),
     file_storage=Depends(get_file_storage),
 ) -> UploadResponse:
     mime_type = file.content_type or "application/octet-stream"
@@ -50,24 +51,21 @@ async def upload_document(
 
     content = await file.read()
 
-    # Step 1 — ingest: hash, dedup, store file, create Document entity
-    try:
-        document = await ingest.execute(
-            IngestDocumentRequest(
-                user_id=user_id,
-                filename=file.filename or "upload",
-                content=content,
-                mime_type=mime_type,
-                upload_date=date.today(),
-                document_type=document_type,
-            )
+    # Step 1 — ingest: hash, store file, create or return existing Document
+    document, is_new = await ingest.execute(
+        IngestDocumentRequest(
+            user_id=user_id,
+            filename=file.filename or "upload",
+            content=content,
+            mime_type=mime_type,
+            upload_date=date.today(),
+            document_type=document_type,
         )
-    except ValueError as exc:
-        if "duplicate" in str(exc):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    )
 
-    # Step 2 — extract: route to correct parser based on mime type
+    # Step 2 — extract: always re-extract so the user gets fresh transactions
+    # For a duplicate file this clears old transactions and re-runs the parser,
+    # which is useful when the parser has been improved or settings changed.
     parser = parser_factory.get_parser_for_mime(mime_type)
     extract = ExtractTransactions(
         document_repo=document_repo,
@@ -108,6 +106,17 @@ async def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     return _to_response(document)
+
+
+@router.delete("/{document_id}", status_code=204)
+async def delete_document(
+    document_id: UUID,
+    document_repo: DocumentRepository = Depends(get_document_repo),
+) -> None:
+    document = await document_repo.get_by_id(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    await document_repo.delete(document_id)
 
 
 def _to_response(doc: Document) -> DocumentResponse:

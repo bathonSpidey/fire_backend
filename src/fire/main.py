@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.fire.api.routers import documents, health, insights, transactions, users
+from fire.api.routers import documents, health, insights, transactions, users
 
 app = FastAPI(
     title="FIRE — Financial Independence, Retire Early",
@@ -15,9 +15,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # alternative dev port
+        "http://localhost:5173",  # Vite dev server (local)
+        "http://localhost:8102",  # fire_frontend Docker
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:8102",
     ],
     allow_origin_regex=r"http://192\.168\.\d+\.\d+(:\d+)?",  # any LAN device
     allow_credentials=True,

@@ -11,6 +11,8 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
 from src.fire.api.dependencies import (
     get_document_repo,
     get_file_storage,
@@ -25,6 +27,7 @@ from src.fire.api.dependencies import (
 from src.fire.config.settings import Settings
 from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
 from src.fire.domain.interfaces.services import ExtractedTransaction, ExtractionResult
+from src.fire.infrastructure.db.models import Base
 from src.fire.infrastructure.db.session import build_test_session_factory
 from src.fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
 from src.fire.infrastructure.repositories.account_insight_repositories import InsightRepository
@@ -40,9 +43,6 @@ from tests.fakes import FakeFileStorage, FakeLLMDocumentParser
 
 @pytest.fixture
 def session_factory():
-    from sqlalchemy import create_engine, event
-    from sqlalchemy.orm import sessionmaker
-    from fire.infrastructure.db.models import Base
 
     # Use a named in-memory DB so all connections share the same data
     engine = create_engine(
@@ -86,7 +86,6 @@ def fake_extraction_result():
 
 @pytest.fixture
 def client(session_factory, fake_file_storage, fake_extraction_result):
-    
 
     fake_parser = FakeLLMDocumentParser(result=fake_extraction_result)
 

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from fire.domain.entities.document import DocumentStatus, DocumentType
+from src.fire.domain.entities.document import DocumentStatus, DocumentType
 
 
 class DocumentResponse(BaseModel):

@@ -4,7 +4,7 @@ from datetime import date as Date  # noqa: N812
 from decimal import Decimal
 from pathlib import Path
 
-from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
 
 
 @dataclass

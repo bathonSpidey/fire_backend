@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from fire.domain.entities.document import DocumentStatus
-from fire.domain.entities.transaction import Transaction
-from fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
-from fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
+from src.fire.domain.entities.document import DocumentStatus
+from src.fire.domain.entities.transaction import Transaction
+from src.fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
+from src.fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
 
 
 @dataclass

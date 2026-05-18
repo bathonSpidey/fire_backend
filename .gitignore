@@ -12,3 +12,4 @@ wheels/
 tests/integration/data/
 *.db
 .env
+data/

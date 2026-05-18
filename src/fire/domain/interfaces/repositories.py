@@ -2,11 +2,11 @@ from abc import ABC, abstractmethod
 from datetime import date as Date  # noqa: N812
 from uuid import UUID
 
-from fire.domain.entities.account import Account
-from fire.domain.entities.budget_insight import BudgetInsight
-from fire.domain.entities.document import Document
-from fire.domain.entities.transaction import Transaction, TransactionCategory
-from fire.domain.entities.user import User
+from src.fire.domain.entities.account import Account
+from src.fire.domain.entities.budget_insight import BudgetInsight
+from src.fire.domain.entities.document import Document
+from src.fire.domain.entities.transaction import Transaction, TransactionCategory
+from src.fire.domain.entities.user import User
 
 
 class IUserRepository(ABC):

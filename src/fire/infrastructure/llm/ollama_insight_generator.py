@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import httpx
 
-from fire.domain.interfaces.services import ILLMInsightGenerator
+from src.fire.domain.interfaces.services import ILLMInsightGenerator
 
 _INSIGHT_PROMPT_TEMPLATE = """
 You are a personal finance coach helping someone achieve Financial Independence and Early Retirement (FIRE).

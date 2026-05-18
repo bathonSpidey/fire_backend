@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from fire.application.use_cases.get_monthly_summary import MonthlySummary
-from fire.domain.entities.budget_insight import BudgetInsight, SpendingBreakdown
-from fire.domain.interfaces.repositories import IInsightRepository
-from fire.domain.interfaces.services import ILLMInsightGenerator
+from src.fire.application.use_cases.get_monthly_summary import MonthlySummary
+from src.fire.domain.entities.budget_insight import BudgetInsight, SpendingBreakdown
+from src.fire.domain.interfaces.repositories import IInsightRepository
+from src.fire.domain.interfaces.services import ILLMInsightGenerator
 
 
 @dataclass

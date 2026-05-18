@@ -1,12 +1,12 @@
-from datetime import date as Date  # noqa: N812
+from datetime import date as Date
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.fire.domain.entities.transaction import Transaction, TransactionCategory, TransactionType
-from src.fire.domain.interfaces.repositories import ITransactionRepository
-from src.fire.infrastructure.db.models import TransactionORM
+from fire.domain.entities.transaction import Transaction, TransactionCategory, TransactionType
+from fire.domain.interfaces.repositories import ITransactionRepository
+from fire.infrastructure.db.models import TransactionORM
 
 
 class TransactionRepository(ITransactionRepository):
@@ -51,6 +51,21 @@ class TransactionRepository(ITransactionRepository):
                 .all()
             )
             return [_to_entity(r) for r in rows]
+
+    async def get_all_by_user(self, user_id: UUID) -> list[Transaction]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(TransactionORM)
+                .filter_by(user_id=str(user_id))
+                .order_by(TransactionORM.date.desc())
+                .all()
+            )
+            return [_to_entity(r) for r in rows]
+
+    async def delete(self, transaction_id: UUID) -> None:
+        with self._session_factory() as session:
+            session.query(TransactionORM).filter_by(id=str(transaction_id)).delete()
+            session.commit()
 
     async def get_by_category(
         self,

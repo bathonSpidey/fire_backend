@@ -13,7 +13,10 @@ class TransactionResponse(BaseModel):
     document_id: UUID
     date: date
     description: str
-    amount: Decimal
+    amount: Decimal = Field(
+        examples=[Decimal("42.50")],
+        description="Transaction amount, always positive.",
+    )
     transaction_type: TransactionType
     category: TransactionCategory
     merchant: str | None = None
@@ -24,12 +27,13 @@ class TransactionResponse(BaseModel):
 
 
 class PatchTransactionRequest(BaseModel):
-    """
-    All fields optional — send only what you want to change.
-    This is how users correct extraction errors.
-    """
+    """All fields optional — send only what you want to change."""
 
-    amount: Decimal | None = Field(default=None, gt=0)
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        examples=[Decimal("42.50")],
+    )
     transaction_type: TransactionType | None = None
     category: TransactionCategory | None = None
     description: str | None = Field(default=None, min_length=1)

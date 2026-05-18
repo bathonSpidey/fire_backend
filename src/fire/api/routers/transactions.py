@@ -2,10 +2,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.fire.api.dependencies import get_transaction_repo
-from src.fire.api.schemas.transaction import PatchTransactionRequest, TransactionResponse
-from src.fire.domain.entities.transaction import Transaction
-from src.fire.infrastructure.repositories.transaction_repository import TransactionRepository
+from fire.api.dependencies import get_transaction_repo
+from fire.api.schemas.transaction import PatchTransactionRequest, TransactionResponse
+from fire.domain.entities.transaction import Transaction
+from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -13,11 +13,19 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 @router.get("", response_model=list[TransactionResponse])
 async def list_transactions(
     user_id: UUID,
-    year: int,
-    month: int,
+    year: int | None = None,
+    month: int | None = None,
     transaction_repo: TransactionRepository = Depends(get_transaction_repo),
 ) -> list[TransactionResponse]:
-    transactions = await transaction_repo.get_by_user_and_month(user_id, year, month)
+    """
+    List transactions for a user.
+    - Provide year + month to filter to a specific month.
+    - Omit both to get all transactions.
+    """
+    if year is not None and month is not None:
+        transactions = await transaction_repo.get_by_user_and_month(user_id, year, month)
+    else:
+        transactions = await transaction_repo.get_all_by_user(user_id)
     return [_to_response(t) for t in transactions]
 
 
@@ -38,10 +46,7 @@ async def patch_transaction(
     request: PatchTransactionRequest,
     transaction_repo: TransactionRepository = Depends(get_transaction_repo),
 ) -> TransactionResponse:
-    """
-    Correct a transaction after extraction.
-    Only the fields provided in the request body are updated.
-    """
+    """Correct a transaction after extraction. Only provided fields are updated."""
     transaction = await transaction_repo.get_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")

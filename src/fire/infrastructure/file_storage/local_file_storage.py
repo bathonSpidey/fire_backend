@@ -5,7 +5,7 @@ from pathlib import Path
 import aiofiles
 import aiofiles.os
 
-from fire.domain.interfaces.services import IFileStorage
+from src.fire.domain.interfaces.services import IFileStorage
 
 
 class LocalFileStorage(IFileStorage):

@@ -1,11 +1,11 @@
-from fire.domain.interfaces.repositories import (
+from src.fire.domain.interfaces.repositories import (
     IAccountRepository,
     IDocumentRepository,
     IInsightRepository,
     ITransactionRepository,
     IUserRepository,
 )
-from fire.domain.interfaces.services import (
+from src.fire.domain.interfaces.services import (
     ExtractedTransaction,
     ExtractionResult,
     IFileStorage,

@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from uuid import UUID
 
-from fire.domain.entities.transaction import TransactionCategory, TransactionType
-from fire.domain.interfaces.repositories import ITransactionRepository
+from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
+from src.fire.domain.interfaces.repositories import ITransactionRepository
 
 
 @dataclass
