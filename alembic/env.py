@@ -14,9 +14,26 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    # Allow override via env var for flexibility; default to root/db/fire.db
-    db_path = os.getenv("FIRE_DB_PATH", str(Path(__file__).parents[1] / "db" / "fire.db"))
-    return f"sqlite:///{db_path}"
+    """
+    Build the database URL from environment variables.
+
+    Priority:
+    1. FIRE_DB_PATH — explicit full path to fire.db
+    2. FIRE_DATA_ROOT — root data directory, db goes in <root>/db/fire.db
+    3. Fallback — ./db/fire.db relative to current working directory
+    """
+    if db_path := os.getenv("FIRE_DB_PATH"):
+        return f"sqlite:///{db_path}"
+
+    if data_root := os.getenv("FIRE_DATA_ROOT"):
+        db_dir = Path(data_root) / "db"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{db_dir / 'fire.db'}"
+
+    # Local development fallback
+    db_dir = Path.cwd() / "db"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{db_dir / 'fire.db'}"
 
 
 def run_migrations_offline() -> None:
@@ -25,7 +42,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,  # required for SQLite ALTER TABLE support
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
