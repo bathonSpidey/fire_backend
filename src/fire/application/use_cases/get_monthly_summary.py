@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from uuid import UUID
 
-from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
-from src.fire.domain.interfaces.repositories import ITransactionRepository
+from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from fire.domain.interfaces.repositories import ITransactionRepository
 
 
 @dataclass
@@ -43,6 +43,9 @@ class GetMonthlySummary:
         category_totals: dict[TransactionCategory, Decimal] = {}
 
         for tx in transactions:
+            # Receipt items are breakdown detail only — parent bank debit already counted
+            if tx.is_receipt_item:
+                continue
             if tx.transaction_type == TransactionType.CREDIT:
                 total_income += tx.amount
             else:

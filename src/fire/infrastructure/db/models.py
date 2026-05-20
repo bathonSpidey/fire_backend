@@ -67,7 +67,9 @@ class DocumentORM(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped["UserORM"] = relationship(back_populates="documents")
-    transactions: Mapped[list["TransactionORM"]] = relationship(back_populates="document")
+    transactions: Mapped[list["TransactionORM"]] = relationship(
+        back_populates="document", foreign_keys="[TransactionORM.document_id]"
+    )
 
 
 class TransactionORM(Base):
@@ -85,11 +87,19 @@ class TransactionORM(Base):
     merchant: Mapped[str | None] = mapped_column(String(200))
     notes: Mapped[str | None] = mapped_column(Text)
     is_recurring: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    parent_transaction_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("transactions.id"), nullable=True
+    )
+    receipt_document_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("documents.id"), nullable=True
+    )
 
     __table_args__ = (Index("ix_transactions_user_year_month", "user_id", "date"),)
 
     user: Mapped["UserORM"] = relationship(back_populates="transactions")
-    document: Mapped["DocumentORM"] = relationship(back_populates="transactions")
+    document: Mapped["DocumentORM"] = relationship(
+        back_populates="transactions", foreign_keys="[TransactionORM.document_id]"
+    )
     account: Mapped["AccountORM"] = relationship(back_populates="transactions")
 
 

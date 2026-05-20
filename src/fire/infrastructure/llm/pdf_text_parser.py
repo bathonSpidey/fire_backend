@@ -16,8 +16,8 @@ from datetime import date as Date
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
-from src.fire.domain.interfaces.services import (
+from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from fire.domain.interfaces.services import (
     ExtractedTransaction,
     ExtractionResult,
     ILLMDocumentParser,
@@ -102,7 +102,10 @@ _CATEGORY_KEYWORDS: list[tuple[TransactionCategory, list[str]]] = [
     (TransactionCategory.INVESTMENT, ["depot", "wertpapier", "aktien", "fonds", "etf", "sparplan"]),
     (TransactionCategory.SAVINGS, ["sparkonto", "tagesgeld", "festgeld", "sparen"]),
     (TransactionCategory.TRANSFER, ["überweisung", "umbuchung", "dauerauftrag", "sepa"]),
-    (TransactionCategory.INCOME, ["gehalt", "lohn", "rente", "zahlungseingang", "gutschrift"]),
+    (
+        TransactionCategory.INCOME,
+        ["gehalt", "lohn", "rente", "zahlungseingang", "gutschrift", "db systel", "systel"],
+    ),
 ]
 
 # ── Debit / credit keyword detection ──────────────────────────────────────
@@ -123,6 +126,8 @@ _CREDIT_KEYWORDS = [
     "lohn/gehalt",
     "lohn",
     "gehalt",
+    "db systel",
+    "systel",
     "rente",
     "kindergeld",
     "erstattung",

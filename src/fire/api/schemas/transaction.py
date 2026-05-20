@@ -22,6 +22,9 @@ class TransactionResponse(BaseModel):
     merchant: str | None = None
     notes: str | None = None
     is_recurring: bool
+    parent_transaction_id: UUID | None = None
+    receipt_document_id: UUID | None = None
+    is_receipt_item: bool = False
 
     model_config = {"from_attributes": True}
 

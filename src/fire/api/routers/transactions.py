@@ -1,10 +1,18 @@
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fire.application.use_cases.attach_receipt import AttachReceipt, AttachReceiptRequest
 
-from fire.api.dependencies import get_transaction_repo
+from fire.api.dependencies import (
+    get_document_repo,
+    get_file_storage,
+    get_parser_factory,
+    get_transaction_repo,
+)
 from fire.api.schemas.transaction import PatchTransactionRequest, TransactionResponse
 from fire.domain.entities.transaction import Transaction
+from fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
 from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -81,6 +89,42 @@ async def delete_transaction(
     await transaction_repo.delete(transaction_id)
 
 
+@router.post("/{transaction_id}/attach-receipt", response_model=list[TransactionResponse])
+async def attach_receipt(
+    transaction_id: UUID,
+    file: UploadFile = File(...),
+    transaction_repo=Depends(get_transaction_repo),
+    document_repo=Depends(get_document_repo),
+    file_storage=Depends(get_file_storage),
+    parser_factory: DocumentParserFactory = Depends(get_parser_factory),
+) -> list[TransactionResponse]:
+    """Attach a receipt image to a bank transaction and extract its line items."""
+    mime_type = file.content_type or "image/png"
+    content = await file.read()
+
+    transaction = await transaction_repo.get_by_id(transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    use_case = AttachReceipt(
+        document_repo=document_repo,
+        transaction_repo=transaction_repo,
+        file_storage=file_storage,
+        llm_parser=parser_factory.get_image_parser(),
+    )
+    items = await use_case.execute(
+        AttachReceiptRequest(
+            user_id=transaction.user_id,
+            parent_transaction_id=transaction_id,
+            filename=file.filename or "receipt",
+            content=content,
+            mime_type=mime_type,
+            upload_date=date.today(),
+        )
+    )
+    return [_to_response(i) for i in items]
+
+
 def _to_response(t: Transaction) -> TransactionResponse:
     return TransactionResponse(
         id=t.id,
@@ -94,4 +138,7 @@ def _to_response(t: Transaction) -> TransactionResponse:
         merchant=t.merchant,
         notes=t.notes,
         is_recurring=t.is_recurring,
+        parent_transaction_id=t.parent_transaction_id,
+        receipt_document_id=t.receipt_document_id,
+        is_receipt_item=t.is_receipt_item,
     )

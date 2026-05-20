@@ -40,6 +40,9 @@ class Transaction:
     merchant: str | None = None
     notes: str | None = None
     is_recurring: bool = False
+    # Phase 1 — receipt attachment
+    parent_transaction_id: UUID | None = None  # receipt items point to bank debit
+    receipt_document_id: UUID | None = None  # bank debit has receipt attached
 
     @classmethod
     def create(
@@ -53,6 +56,7 @@ class Transaction:
         category: TransactionCategory = TransactionCategory.OTHER,
         account_id: UUID | None = None,
         merchant: str | None = None,
+        parent_transaction_id: UUID | None = None,
     ) -> "Transaction":
         if amount < Decimal("0"):
             raise ValueError("Amount must be non-negative. Use transaction_type for direction.")
@@ -67,7 +71,13 @@ class Transaction:
             transaction_type=transaction_type,
             category=category,
             merchant=merchant,
+            parent_transaction_id=parent_transaction_id,
         )
+
+    @property
+    def is_receipt_item(self) -> bool:
+        """True when this transaction is a receipt line item, not a top-level bank entry."""
+        return self.parent_transaction_id is not None
 
     @property
     def signed_amount(self) -> Decimal:
