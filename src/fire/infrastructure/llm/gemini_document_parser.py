@@ -17,8 +17,8 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 
-from src.fire.domain.entities.transaction import TransactionCategory, TransactionType
-from src.fire.domain.interfaces.services import (
+from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from fire.domain.interfaces.services import (
     ExtractedTransaction,
     ExtractionResult,
     ILLMDocumentParser,
@@ -109,6 +109,7 @@ class GeminiDocumentParser(ILLMDocumentParser):
             "generationConfig": {
                 "response_mime_type": "application/json",
                 "temperature": 0.1,
+                "maxOutputTokens": 8192,
             },
         }
 
@@ -159,8 +160,16 @@ class GeminiDocumentParser(ILLMDocumentParser):
     # ── Response parsing ───────────────────────────────────────────────────
 
     def _parse_response(self, raw_text: str) -> ExtractionResult:
+        import logging
+
+        logger = logging.getLogger(__name__)
         clean = self._extract_json(raw_text)
-        data = json.loads(clean)
+        try:
+            data = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            logger.error("Gemini response is not valid JSON (possibly truncated): %s", exc)
+            logger.error("Raw response was: %s", raw_text)
+            return ExtractionResult(transactions=[], raw_llm_response=raw_text)
         transactions = [
             self._parse_transaction(tx) for tx in data.get("transactions", []) if self._is_valid(tx)
         ]
@@ -186,7 +195,8 @@ class GeminiDocumentParser(ILLMDocumentParser):
 
     @staticmethod
     def _is_valid(tx: dict) -> bool:  # type: ignore[type-arg]
-        return bool(tx.get("date")) and bool(tx.get("amount"))
+        # Only require amount — date can be null for receipts (we fall back to today)
+        return bool(tx.get("amount"))
 
     @staticmethod
     def _clean_amount(value: str | float | int) -> str:

@@ -62,6 +62,16 @@ class TransactionRepository(ITransactionRepository):
             )
             return [_to_entity(r) for r in rows]
 
+    async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(TransactionORM)
+                .filter_by(parent_transaction_id=str(parent_transaction_id))
+                .order_by(TransactionORM.description)
+                .all()
+            )
+            return [_to_entity(r) for r in rows]
+
     async def delete(self, transaction_id: UUID) -> None:
         with self._session_factory() as session:
             session.query(TransactionORM).filter_by(id=str(transaction_id)).delete()
@@ -100,6 +110,8 @@ def _to_orm(tx: Transaction) -> TransactionORM:
         merchant=tx.merchant,
         notes=tx.notes,
         is_recurring=tx.is_recurring,
+        parent_transaction_id=str(tx.parent_transaction_id) if tx.parent_transaction_id else None,
+        receipt_document_id=str(tx.receipt_document_id) if tx.receipt_document_id else None,
     )
 
 
@@ -117,4 +129,8 @@ def _to_entity(orm: TransactionORM) -> Transaction:
         merchant=orm.merchant,
         notes=orm.notes,
         is_recurring=orm.is_recurring,
+        parent_transaction_id=UUID(orm.parent_transaction_id)
+        if orm.parent_transaction_id
+        else None,
+        receipt_document_id=UUID(orm.receipt_document_id) if orm.receipt_document_id else None,
     )

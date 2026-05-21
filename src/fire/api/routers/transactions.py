@@ -2,7 +2,6 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fire.application.use_cases.attach_receipt import AttachReceipt, AttachReceiptRequest
 
 from fire.api.dependencies import (
     get_document_repo,
@@ -11,6 +10,7 @@ from fire.api.dependencies import (
     get_transaction_repo,
 )
 from fire.api.schemas.transaction import PatchTransactionRequest, TransactionResponse
+from fire.application.use_cases.attach_receipt import AttachReceipt, AttachReceiptRequest
 from fire.domain.entities.transaction import Transaction
 from fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
 from fire.infrastructure.repositories.transaction_repository import TransactionRepository
@@ -89,6 +89,16 @@ async def delete_transaction(
     await transaction_repo.delete(transaction_id)
 
 
+@router.get("/{transaction_id}/items", response_model=list[TransactionResponse])
+async def list_receipt_items(
+    transaction_id: UUID,
+    transaction_repo: TransactionRepository = Depends(get_transaction_repo),
+) -> list[TransactionResponse]:
+    """List all receipt line items attached to a bank transaction."""
+    items = await transaction_repo.get_by_parent(transaction_id)
+    return [_to_response(i) for i in items]
+
+
 @router.post("/{transaction_id}/attach-receipt", response_model=list[TransactionResponse])
 async def attach_receipt(
     transaction_id: UUID,
@@ -140,5 +150,5 @@ def _to_response(t: Transaction) -> TransactionResponse:
         is_recurring=t.is_recurring,
         parent_transaction_id=t.parent_transaction_id,
         receipt_document_id=t.receipt_document_id,
-        is_receipt_item=t.is_receipt_item,
+        is_receipt_item=t.parent_transaction_id is not None,
     )

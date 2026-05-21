@@ -1,7 +1,15 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from fire.api.routers import documents, health, insights, transactions, users
+from fire.api.routers import config, documents, health, insights, transactions, users
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="FIRE — Financial Independence, Retire Early",
@@ -28,6 +36,7 @@ app.add_middleware(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 app.include_router(health.router)
+app.include_router(config.router)
 app.include_router(users.router)
 app.include_router(documents.router)
 app.include_router(transactions.router)

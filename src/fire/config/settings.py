@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # ── Gemini ────────────────────────────────────────────────────────────────
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_available_models: list[str] = Field(
+        default=[
+            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite-preview",
+        ]
+    )
 
     # ── Claude ────────────────────────────────────────────────────────────────
     anthropic_api_key: str = Field(default="")
