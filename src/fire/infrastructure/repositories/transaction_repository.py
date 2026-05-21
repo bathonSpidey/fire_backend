@@ -62,6 +62,26 @@ class TransactionRepository(ITransactionRepository):
             )
             return [_to_entity(r) for r in rows]
 
+    async def get_by_transfer_document(self, transfer_document_id: UUID) -> list[Transaction]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(TransactionORM)
+                .filter_by(document_id=str(transfer_document_id))
+                .order_by(TransactionORM.date.desc())
+                .all()
+            )
+            return [_to_entity(r) for r in rows]
+
+    async def get_transfers_by_user(self, user_id: UUID) -> list[Transaction]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(TransactionORM)
+                .filter_by(user_id=str(user_id), transaction_type="transfer")
+                .order_by(TransactionORM.date.desc())
+                .all()
+            )
+            return [_to_entity(r) for r in rows]
+
     async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]:
         with self._session_factory() as session:
             rows = (
@@ -112,6 +132,8 @@ def _to_orm(tx: Transaction) -> TransactionORM:
         is_recurring=tx.is_recurring,
         parent_transaction_id=str(tx.parent_transaction_id) if tx.parent_transaction_id else None,
         receipt_document_id=str(tx.receipt_document_id) if tx.receipt_document_id else None,
+        transfer_account_name=tx.transfer_account_name,
+        transfer_document_id=str(tx.transfer_document_id) if tx.transfer_document_id else None,
     )
 
 
@@ -133,4 +155,6 @@ def _to_entity(orm: TransactionORM) -> Transaction:
         if orm.parent_transaction_id
         else None,
         receipt_document_id=UUID(orm.receipt_document_id) if orm.receipt_document_id else None,
+        transfer_account_name=orm.transfer_account_name,
+        transfer_document_id=UUID(orm.transfer_document_id) if orm.transfer_document_id else None,
     )

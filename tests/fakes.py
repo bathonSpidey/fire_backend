@@ -9,19 +9,19 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
-from src.fire.domain.entities.account import Account
-from src.fire.domain.entities.budget_insight import BudgetInsight
-from src.fire.domain.entities.document import Document
-from src.fire.domain.entities.transaction import Transaction, TransactionCategory
-from src.fire.domain.entities.user import User
-from src.fire.domain.interfaces.repositories import (
+from fire.domain.entities.account import Account
+from fire.domain.entities.budget_insight import BudgetInsight
+from fire.domain.entities.document import Document
+from fire.domain.entities.transaction import Transaction, TransactionCategory
+from fire.domain.entities.user import User
+from fire.domain.interfaces.repositories import (
     IAccountRepository,
     IDocumentRepository,
     IInsightRepository,
     ITransactionRepository,
     IUserRepository,
 )
-from src.fire.domain.interfaces.services import (
+from fire.domain.interfaces.services import (
     ExtractionResult,
     IFileStorage,
     ILLMDocumentParser,
@@ -62,6 +62,9 @@ class FakeDocumentRepository(IDocumentRepository):
         results = [d for d in self._store.values() if d.user_id == user_id]
         return results[offset : offset + limit]
 
+    async def delete(self, document_id: UUID) -> None:
+        self._store.pop(document_id, None)
+
     async def update(self, document: Document) -> Document:
         self._store[document.id] = document
         return document
@@ -94,6 +97,25 @@ class FakeTransactionRepository(ITransactionRepository):
             for t in self._store.values()
             if t.user_id == user_id and t.date.year == year and t.date.month == month
         ]
+
+    async def get_by_transfer_document(self, transfer_document_id: UUID) -> list[Transaction]:
+        return [t for t in self._store.values() if t.document_id == transfer_document_id]
+
+    async def get_transfers_by_user(self, user_id: UUID) -> list[Transaction]:
+        return [
+            t
+            for t in self._store.values()
+            if t.user_id == user_id and t.transaction_type.value == "transfer"
+        ]
+
+    async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]:
+        return [t for t in self._store.values() if t.parent_transaction_id == parent_transaction_id]
+
+    async def delete(self, transaction_id: UUID) -> None:
+        self._store.pop(transaction_id, None)
+
+    async def get_all_by_user(self, user_id: UUID) -> list[Transaction]:
+        return [t for t in self._store.values() if t.user_id == user_id]
 
     async def get_by_category(
         self,

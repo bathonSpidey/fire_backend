@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from datetime import date as Date  # noqa: N812
+from datetime import date as Date
 from uuid import UUID
 
-from src.fire.domain.entities.account import Account
-from src.fire.domain.entities.budget_insight import BudgetInsight
-from src.fire.domain.entities.document import Document
-from src.fire.domain.entities.transaction import Transaction, TransactionCategory
-from src.fire.domain.entities.user import User
+from fire.domain.entities.account import Account
+from fire.domain.entities.budget_insight import BudgetInsight
+from fire.domain.entities.document import Document
+from fire.domain.entities.transaction import Transaction, TransactionCategory
+from fire.domain.entities.user import User
 
 
 class IUserRepository(ABC):
@@ -25,15 +25,16 @@ class IDocumentRepository(ABC):
     async def save(self, document: Document) -> Document: ...
 
     @abstractmethod
+    async def delete(self, document_id: UUID) -> None: ...
+
+    @abstractmethod
     async def get_by_id(self, document_id: UUID) -> Document | None: ...
 
     @abstractmethod
     async def get_by_hash(self, file_hash: str) -> Document | None: ...
 
     @abstractmethod
-    async def list_by_user(
-        self, user_id: UUID, limit: int = 50, offset: int = 0
-    ) -> list[Document]: ...
+    async def list_by_user(self, user_id: UUID, limit: int = 50, offset: int = 0) -> list[Document]: ...
 
     @abstractmethod
     async def update(self, document: Document) -> Document: ...
@@ -53,9 +54,22 @@ class ITransactionRepository(ABC):
     async def get_by_document(self, document_id: UUID) -> list[Transaction]: ...
 
     @abstractmethod
-    async def get_by_user_and_month(
-        self, user_id: UUID, year: int, month: int
-    ) -> list[Transaction]: ...
+    async def get_by_user_and_month(self, user_id: UUID, year: int, month: int) -> list[Transaction]: ...
+
+    @abstractmethod
+    async def delete(self, transaction_id: UUID) -> None: ...
+
+    @abstractmethod
+    async def get_all_by_user(self, user_id: UUID) -> list[Transaction]: ...
+
+    @abstractmethod
+    async def get_by_transfer_document(self, transfer_document_id: UUID) -> list[Transaction]: ...
+
+    @abstractmethod
+    async def get_transfers_by_user(self, user_id: UUID) -> list[Transaction]: ...
+
+    @abstractmethod
+    async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]: ...
 
     @abstractmethod
     async def get_by_category(
@@ -86,9 +100,7 @@ class IInsightRepository(ABC):
     async def save(self, insight: BudgetInsight) -> BudgetInsight: ...
 
     @abstractmethod
-    async def get_by_user_and_month(
-        self, user_id: UUID, year: int, month: int
-    ) -> BudgetInsight | None: ...
+    async def get_by_user_and_month(self, user_id: UUID, year: int, month: int) -> BudgetInsight | None: ...
 
     @abstractmethod
     async def list_by_user(self, user_id: UUID, limit: int = 12) -> list[BudgetInsight]: ...

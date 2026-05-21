@@ -93,6 +93,8 @@ class TransactionORM(Base):
     receipt_document_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("documents.id"), nullable=True
     )
+    transfer_account_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    transfer_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     __table_args__ = (Index("ix_transactions_user_year_month", "user_id", "date"),)
 
