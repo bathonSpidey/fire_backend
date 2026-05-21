@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date as Date
 from decimal import Decimal
 from enum import StrEnum
@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 class TransactionType(StrEnum):
     DEBIT = "debit"
     CREDIT = "credit"
+    TRANSFER = "transfer"  # money moved to investment account — excluded from expense totals
 
 
 class TransactionCategory(StrEnum):
@@ -40,9 +41,12 @@ class Transaction:
     merchant: str | None = None
     notes: str | None = None
     is_recurring: bool = False
-    # Phase 1 — receipt attachment
-    parent_transaction_id: UUID | None = None  # receipt items point to bank debit
-    receipt_document_id: UUID | None = None  # bank debit has receipt attached
+    # Receipt attachment
+    parent_transaction_id: UUID | None = None
+    receipt_document_id: UUID | None = None
+    # Transfer / investment account attachment
+    transfer_account_name: str | None = None  # e.g. "N26", "Commerzbank"
+    transfer_document_id: UUID | None = None  # the attached investment PDF
 
     @classmethod
     def create(
@@ -57,6 +61,7 @@ class Transaction:
         account_id: UUID | None = None,
         merchant: str | None = None,
         parent_transaction_id: UUID | None = None,
+        transfer_account_name: str | None = None,
     ) -> "Transaction":
         if amount < Decimal("0"):
             raise ValueError("Amount must be non-negative. Use transaction_type for direction.")
@@ -72,12 +77,16 @@ class Transaction:
             category=category,
             merchant=merchant,
             parent_transaction_id=parent_transaction_id,
+            transfer_account_name=transfer_account_name,
         )
 
     @property
     def is_receipt_item(self) -> bool:
-        """True when this transaction is a receipt line item, not a top-level bank entry."""
         return self.parent_transaction_id is not None
+
+    @property
+    def is_transfer(self) -> bool:
+        return self.transaction_type == TransactionType.TRANSFER
 
     @property
     def signed_amount(self) -> Decimal:

@@ -23,6 +23,46 @@ from fire.domain.interfaces.services import (
     ILLMDocumentParser,
 )
 
+# ── Noise patterns — lines to skip entirely ──────────────────────────────────
+# These are PDF headers, footers, navigation text, and section labels that
+# appear in German bank statements but are not transactions.
+_NOISE_PATTERNS = [
+    r"^seite\s+\d+",
+    r"^\d+\s*/\s*\d+$",
+    r"^nr\.\s+\d{2}/\d{4}",
+    r"^kontoauszug\s+nr",
+    r"^buchungstag",
+    r"^wertstellungstag",
+    r"^betrag\s+(soll|haben)",
+    r"^beschreibung$",
+    r"^verwendungszweck$",
+    r"^glaeubiger.id",
+    r"dein alter kontostand",
+    r"dein neuer kontostand",
+    r"alter kontostand",
+    r"neuer kontostand",
+    r"anfangssaldo",
+    r"endsaldo",
+    r"^saldo\b",
+    r"^kontostand\b",
+    r"^closing balance",
+    r"^opening balance",
+    r"^iban\b",
+    r"^bic\b",
+    r"^konto\s+\d",
+    r"^blz\b",
+    r"^bankleitzahl",
+    r"ihre?\s+iban",
+    r"^uebertrag\s+(von|auf)\s+seite",
+    r"^weiter\s+auf\s+seite",
+    r"^fortsetzung",
+    r"^summe\s+(ein|aus)",
+]
+_NOISE_RE = re.compile(
+    "|".join(f"({p})" for p in _NOISE_PATTERNS),
+    re.IGNORECASE,
+)
+
 # ── Amount pattern ─────────────────────────────────────────────────────────
 # Matches: 1.234,56  or  1234,56  or  1.234.567,89
 # Optionally preceded by - for debits in some formats
@@ -190,7 +230,11 @@ class PdfTextParser(ILLMDocumentParser):
     # ── Main parsing ───────────────────────────────────────────────────────
 
     def _parse_text(self, text: str) -> ExtractionResult:
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        lines = [
+            ln.strip()
+            for ln in text.splitlines()
+            if ln.strip() and not _NOISE_RE.search(ln.strip())
+        ]
 
         account_name = self._find_account_name(lines)
         account_institution = self._find_institution(lines)

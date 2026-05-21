@@ -91,7 +91,7 @@ class AttachReceipt:
             tx = Transaction.create(
                 user_id=request.user_id,
                 document_id=document.id,
-                date=extracted.date,
+                date=parent.date,  # always inherit parent bank transaction date
                 description=extracted.description,
                 amount=Decimal(str(extracted.amount)),
                 transaction_type=TransactionType(extracted.transaction_type),

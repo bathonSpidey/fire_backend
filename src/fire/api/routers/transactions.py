@@ -1,7 +1,11 @@
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fire.application.use_cases.attach_transfer_statement import (
+    AttachTransferStatement,
+    AttachTransferStatementRequest,
+)
 
 from fire.api.dependencies import (
     get_document_repo,
@@ -135,6 +139,66 @@ async def attach_receipt(
     return [_to_response(i) for i in items]
 
 
+@router.post("/{transaction_id}/attach-transfer", response_model=dict)
+async def attach_transfer_statement(
+    transaction_id: UUID,
+    account_name: str = Form(...),
+    file: UploadFile = File(...),
+    transaction_repo=Depends(get_transaction_repo),
+    document_repo=Depends(get_document_repo),
+    file_storage=Depends(get_file_storage),
+    parser_factory: DocumentParserFactory = Depends(get_parser_factory),
+) -> dict:
+    """Attach an investment bank statement PDF to a transfer transaction."""
+    transaction = await transaction_repo.get_by_id(transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    content = await file.read()
+    mime_type = file.content_type or "application/pdf"
+
+    use_case = AttachTransferStatement(
+        document_repo=document_repo,
+        transaction_repo=transaction_repo,
+        file_storage=file_storage,
+        llm_parser=parser_factory.get_parser_for_mime(mime_type),
+    )
+    return await use_case.execute(
+        AttachTransferStatementRequest(
+            user_id=transaction.user_id,
+            transfer_transaction_id=transaction_id,
+            account_name=account_name,
+            filename=file.filename or "statement",
+            content=content,
+            mime_type=mime_type,
+            upload_date=date.today(),
+        )
+    )
+
+
+@router.get("/{transaction_id}/transfer-transactions", response_model=list[TransactionResponse])
+async def list_transfer_transactions(
+    transaction_id: UUID,
+    transaction_repo=Depends(get_transaction_repo),
+) -> list[TransactionResponse]:
+    """List all transactions from the attached investment bank statement."""
+    transaction = await transaction_repo.get_by_id(transaction_id)
+    if not transaction or not transaction.transfer_document_id:
+        return []
+    items = await transaction_repo.get_by_transfer_document(transaction.transfer_document_id)
+    return [_to_response(i) for i in items]
+
+
+@router.get("/transfers/by-user", response_model=list[TransactionResponse])
+async def list_transfers(
+    user_id: UUID,
+    transaction_repo=Depends(get_transaction_repo),
+) -> list[TransactionResponse]:
+    """All transfer transactions for the Banks view."""
+    transfers = await transaction_repo.get_transfers_by_user(user_id)
+    return [_to_response(t) for t in transfers]
+
+
 def _to_response(t: Transaction) -> TransactionResponse:
     return TransactionResponse(
         id=t.id,
@@ -151,4 +215,6 @@ def _to_response(t: Transaction) -> TransactionResponse:
         parent_transaction_id=t.parent_transaction_id,
         receipt_document_id=t.receipt_document_id,
         is_receipt_item=t.parent_transaction_id is not None,
+        transfer_account_name=t.transfer_account_name,
+        transfer_document_id=t.transfer_document_id,
     )
