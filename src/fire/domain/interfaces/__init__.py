@@ -1,3 +1,4 @@
+from src.fire.domain.interfaces.logger import ILogger
 from src.fire.domain.interfaces.repositories import (
     IAccountRepository,
     IDocumentRepository,
@@ -14,6 +15,7 @@ from src.fire.domain.interfaces.services import (
 )
 
 __all__ = [
+    "ILogger",
     "IAccountRepository",
     "IDocumentRepository",
     "IInsightRepository",

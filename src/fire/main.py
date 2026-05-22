@@ -1,15 +1,12 @@
-import logging
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fire.api.routers import config, documents, health, insights, transactions, users
+from fire.config.settings import Settings
+from fire.infrastructure.logging import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-)
-logging.basicConfig(level=logging.INFO)
+# ── Logging ───────────────────────────────────────────────────────────────────
+configure_logging(level=Settings().log_level)
 
 app = FastAPI(
     title="FIRE — Financial Independence, Retire Early",

@@ -10,6 +10,7 @@ API reference: https://ai.google.dev/api/generate-content
 
 import base64
 import json
+import logging
 import re
 from datetime import date as Date
 from datetime import datetime
@@ -23,6 +24,8 @@ from fire.domain.interfaces.services import (
     ExtractionResult,
     ILLMDocumentParser,
 )
+
+_log = logging.getLogger(__name__)
 
 _GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
@@ -160,15 +163,12 @@ class GeminiDocumentParser(ILLMDocumentParser):
     # ── Response parsing ───────────────────────────────────────────────────
 
     def _parse_response(self, raw_text: str) -> ExtractionResult:
-        import logging
-
-        logger = logging.getLogger(__name__)
         clean = self._extract_json(raw_text)
         try:
             data = json.loads(clean)
         except json.JSONDecodeError as exc:
-            logger.error("Gemini response is not valid JSON (possibly truncated): %s", exc)
-            logger.error("Raw response was: %s", raw_text)
+            _log.error("Gemini response is not valid JSON (possibly truncated): %s", exc)
+            _log.error("Raw response was: %s", raw_text)
             return ExtractionResult(transactions=[], raw_llm_response=raw_text)
         transactions = [
             self._parse_transaction(tx) for tx in data.get("transactions", []) if self._is_valid(tx)

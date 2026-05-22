@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="")
     anthropic_model: str = Field(default="claude-opus-4-5")
 
+    # ── Logging ───────────────────────────────────────────────────────────────
+    log_level: str = Field(
+        default="INFO",
+        description="Root log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+    )
+
     # ── Ollama ────────────────────────────────────────────────────────────────
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_vision_model: str = Field(default="gemma4:e2b")

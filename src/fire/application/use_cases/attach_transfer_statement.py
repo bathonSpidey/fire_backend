@@ -1,4 +1,3 @@
-import logging
 from dataclasses import dataclass
 from datetime import date as Date
 from decimal import Decimal
@@ -9,10 +8,9 @@ from fire.application.use_cases.ingest_document import IngestDocument, IngestDoc
 from fire.domain.entities.document import DocumentType
 from fire.domain.entities.transaction import Transaction, TransactionCategory, TransactionType
 from fire.domain.entities.transaction import TransactionType as TxType
+from fire.domain.interfaces.logger import ILogger
 from fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
 from fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,11 +41,13 @@ class AttachTransferStatement:
         transaction_repo: ITransactionRepository,
         file_storage: IFileStorage,
         llm_parser: ILLMDocumentParser,
+        logger: ILogger,
     ) -> None:
         self._document_repo = document_repo
         self._transaction_repo = transaction_repo
         self._file_storage = file_storage
         self._llm_parser = llm_parser
+        self._logger = logger
 
     async def execute(self, request: AttachTransferStatementRequest) -> dict:
         # Verify parent transfer transaction exists
@@ -59,7 +59,7 @@ class AttachTransferStatement:
         transfer_tx.transaction_type = TransactionType.TRANSFER
         transfer_tx.transfer_account_name = request.account_name
         await self._transaction_repo.save(transfer_tx)
-        logger.info("AttachTransfer: marked tx=%s as TRANSFER to %s",
+        self._logger.info("AttachTransfer: marked tx=%s as TRANSFER to %s",
                     request.transfer_transaction_id, request.account_name)
 
         # Step 2 — ingest the PDF
@@ -75,12 +75,12 @@ class AttachTransferStatement:
             upload_date=request.upload_date,
             document_type=DocumentType.INVESTMENT_STATEMENT,
         ))
-        logger.info("AttachTransfer: document ingested id=%s", document.id)
+        self._logger.info("AttachTransfer: document ingested id=%s", document.id)
 
         # Step 3 — parse the PDF directly (no ExtractTransactions use case)
         file_bytes = await self._file_storage.read(Path(document.file_path))
         result = await self._llm_parser.parse(file_bytes, request.mime_type)
-        logger.info("AttachTransfer: LLM returned %d transactions", len(result.transactions))
+        self._logger.info("AttachTransfer: LLM returned %d transactions", len(result.transactions))
 
         # Step 4 — build and save transactions with document_id set correctly
         
@@ -102,18 +102,18 @@ class AttachTransferStatement:
 
         if items:
             saved = await self._transaction_repo.save_batch(items)
-            logger.info("AttachTransfer: saved %d investment transactions", len(saved))
+            self._logger.info("AttachTransfer: saved %d investment transactions", len(saved))
 
             # Verify immediately
             check = await self._transaction_repo.get_by_transfer_document(document.id)
-            logger.info("AttachTransfer: verification found %d transactions in DB", len(check))
+            self._logger.info("AttachTransfer: verification found %d transactions in DB", len(check))
         else:
-            logger.warning("AttachTransfer: no transactions extracted from PDF")
+            self._logger.warning("AttachTransfer: no transactions extracted from PDF")
 
         # Step 5 — link document back to the transfer transaction
         transfer_tx.transfer_document_id = document.id
         await self._transaction_repo.save(transfer_tx)
-        logger.info("AttachTransfer: linked document=%s to transfer tx=%s",
+        self._logger.info("AttachTransfer: linked document=%s to transfer tx=%s",
                     document.id, request.transfer_transaction_id)
 
         # Step 6 — mark document processed

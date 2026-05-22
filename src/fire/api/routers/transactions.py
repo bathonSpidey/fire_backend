@@ -17,6 +17,7 @@ from fire.api.schemas.transaction import PatchTransactionRequest, TransactionRes
 from fire.application.use_cases.attach_receipt import AttachReceipt, AttachReceiptRequest
 from fire.domain.entities.transaction import Transaction
 from fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
+from fire.infrastructure.logging import get_logger
 from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -125,6 +126,7 @@ async def attach_receipt(
         transaction_repo=transaction_repo,
         file_storage=file_storage,
         llm_parser=parser_factory.get_image_parser(),
+        logger=get_logger("fire.application.use_cases.attach_receipt"),
     )
     items = await use_case.execute(
         AttachReceiptRequest(
@@ -162,6 +164,7 @@ async def attach_transfer_statement(
         transaction_repo=transaction_repo,
         file_storage=file_storage,
         llm_parser=parser_factory.get_parser_for_mime(mime_type),
+        logger=get_logger("fire.application.use_cases.attach_transfer_statement"),
     )
     return await use_case.execute(
         AttachTransferStatementRequest(
