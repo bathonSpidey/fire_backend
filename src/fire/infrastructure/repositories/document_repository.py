@@ -2,9 +2,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.fire.domain.entities.document import Document, DocumentStatus, DocumentType
-from src.fire.domain.interfaces.repositories import IDocumentRepository
-from src.fire.infrastructure.db.models import DocumentORM
+from fire.domain.entities.document import Document, DocumentStatus, DocumentType
+from fire.domain.interfaces.repositories import IDocumentRepository
+from fire.infrastructure.db.models import DocumentORM
 
 
 class DocumentRepository(IDocumentRepository):
@@ -38,6 +38,11 @@ class DocumentRepository(IDocumentRepository):
                 .all()
             )
             return [_to_entity(r) for r in rows]
+
+    async def delete(self, document_id: UUID) -> None:
+        with self._session_factory() as session:
+            session.query(DocumentORM).filter_by(id=str(document_id)).delete()
+            session.commit()
 
     async def update(self, document: Document) -> Document:
         with self._session_factory() as session:

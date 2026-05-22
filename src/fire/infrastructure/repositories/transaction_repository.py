@@ -94,6 +94,16 @@ class TransactionRepository(ITransactionRepository):
 
     async def delete(self, transaction_id: UUID) -> None:
         with self._session_factory() as session:
+            # Cascade: delete receipt items and investment transactions linked to this one
+            session.query(TransactionORM).filter_by(
+                parent_transaction_id=str(transaction_id)
+            ).delete()
+            # Also delete any investment transactions from an attached transfer document
+            tx = session.query(TransactionORM).filter_by(id=str(transaction_id)).first()
+            if tx and tx.transfer_document_id:
+                session.query(TransactionORM).filter_by(
+                    document_id=tx.transfer_document_id
+                ).delete()
             session.query(TransactionORM).filter_by(id=str(transaction_id)).delete()
             session.commit()
 

@@ -66,7 +66,7 @@ _NOISE_RE = re.compile(
 # ── Amount pattern ─────────────────────────────────────────────────────────
 # Matches: 1.234,56  or  1234,56  or  1.234.567,89
 # Optionally preceded by - for debits in some formats
-_AMOUNT_RE = re.compile(r"-?\d{1,3}(?:\.\d{3})*,\d{2}")
+_AMOUNT_RE = re.compile(r"[+-]?\d{1,3}(?:\.\d{3})*,\d{2}")
 
 # ── Date pattern ──────────────────────────────────────────────────────────
 _DATE_RE = re.compile(r"\b(\d{2})\.(\d{2})\.(\d{4})\b")
@@ -317,7 +317,8 @@ class PdfTextParser(ILLMDocumentParser):
 
         raw = match.group()
         is_negative = raw.startswith("-") or line.strip().endswith("-")
-        normalized = raw.lstrip("-").replace(".", "").replace(",", ".")
+        is_positive = raw.startswith("+")  # N26 explicitly marks credits with +
+        normalized = raw.lstrip("+-").replace(".", "").replace(",", ".")
 
         try:
             amount = Decimal(normalized)
@@ -325,6 +326,10 @@ class PdfTextParser(ILLMDocumentParser):
             return None, None
 
         line_lower = line.lower()
+
+        # N26 explicit + prefix = credit
+        if is_positive:
+            return amount, TransactionType.CREDIT
 
         # Explicit column header keywords
         if "soll" in line_lower or is_negative:
