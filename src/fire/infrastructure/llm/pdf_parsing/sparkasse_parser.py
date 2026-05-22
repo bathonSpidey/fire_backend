@@ -22,20 +22,18 @@ from fire.infrastructure.llm.pdf_parsing.shared import (
     parse_date,
 )
 
-_NOISE_RE = build_noise_re(
-    [
-        r"^nr\.\s+\d{2}/\d{4}",
-        r"^kontostand\b",
-        r"alter kontostand",
-        r"neuer kontostand",
-        r"dein alter kontostand",
-        r"dein neuer kontostand",
-        r"^konto\s+\d",
-        r"^blz\b",
-        r"ihre?\s+iban",
-        r"^uebertrag\s+(von|auf)\s+seite",
-    ]
-)
+_NOISE_RE = build_noise_re([
+    r"^nr\.\s+\d{2}/\d{4}",
+    r"^kontostand\b",
+    r"alter kontostand",
+    r"neuer kontostand",
+    r"dein alter kontostand",
+    r"dein neuer kontostand",
+    r"^konto\s+\d",
+    r"^blz\b",
+    r"ihre?\s+iban",
+    r"^uebertrag\s+(von|auf)\s+seite",
+])
 
 
 class SparkassePdfParser:
@@ -67,16 +65,14 @@ class SparkassePdfParser:
                 if amount is not None and amount > Decimal("0"):
                     description = " ".join(desc_parts).strip()
                     if description:
-                        transactions.append(
-                            ExtractedTransaction(
-                                date=date,
-                                description=description,
-                                amount=amount,
-                                transaction_type=tx_type or infer_type(description),
-                                category=categorise(description),
-                                merchant=description.split()[0].title() if description else None,
-                            )
-                        )
+                        transactions.append(ExtractedTransaction(
+                            date=date,
+                            description=description,
+                            amount=amount,
+                            transaction_type=tx_type or infer_type(description),
+                            category=categorise(description),
+                            merchant=description.split()[0].title() if description else None,
+                        ))
                     i = j + 1
                     continue
             i += 1

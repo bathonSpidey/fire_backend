@@ -33,23 +33,21 @@ from fire.infrastructure.llm.pdf_parsing.shared import (
     parse_date,
 )
 
-_N26_NOISE_RE = build_noise_re(
-    [
-        r"^value\s+date",
-        r"^booking\s+date",
-        r"^amount$",
-        r"^sent\s+from\s+n26",
-        r"^issued\s+on",
-        r"^issued$",
-        r"^\d+\s*/\s*\d+$",
-        r"^rua\s+",
-        r"^rue\s+",
-        r"kontostand",
-        r"^n26\s+business\s+smart",  # subscription line
-        r"^n26\s+smart",
-        r"dein\s+(alter|neuer)\s+kontostand",
-    ]
-)
+_N26_NOISE_RE = build_noise_re([
+    r"^value\s+date",
+    r"^booking\s+date",
+    r"^amount$",
+    r"^sent\s+from\s+n26",
+    r"^issued\s+on",
+    r"^issued$",
+    r"^\d+\s*/\s*\d+$",
+    r"^rua\s+",
+    r"^rue\s+",
+    r"kontostand",
+    r"^n26\s+business\s+smart",  # subscription line
+    r"^n26\s+smart",
+    r"dein\s+(alter|neuer)\s+kontostand",
+])
 
 
 class N26PdfParser:
@@ -80,28 +78,22 @@ class N26PdfParser:
                         desc_lines = []
                         for back in range(max(0, i - 4), i):
                             candidate = lines[back]
-                            if (
-                                not _DATE_RE.match(candidate)
-                                and not _N26_NOISE_RE.search(candidate)
-                                and not _AMOUNT_RE.search(candidate)
-                            ):
+                            if (not _DATE_RE.match(candidate) and
+                                    not _N26_NOISE_RE.search(candidate) and
+                                    not _AMOUNT_RE.search(candidate)):
                                 desc_lines.append(candidate)
                         description = " ".join(desc_lines).strip()
                         if not description:
                             description = "N26 transaction"
                         if amount > Decimal("0"):
-                            transactions.append(
-                                ExtractedTransaction(
-                                    date=date,
-                                    description=description,
-                                    amount=amount,
-                                    transaction_type=tx_type or infer_type(description),
-                                    category=categorise(description),
-                                    merchant=description.split()[0].title()
-                                    if description
-                                    else None,
-                                )
-                            )
+                            transactions.append(ExtractedTransaction(
+                                date=date,
+                                description=description,
+                                amount=amount,
+                                transaction_type=tx_type or infer_type(description),
+                                category=categorise(description),
+                                merchant=description.split()[0].title() if description else None,
+                            ))
                         i = k + 1
                         break
                 else:

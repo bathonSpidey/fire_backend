@@ -1,11 +1,8 @@
+import logging
 from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fire.application.use_cases.attach_transfer_statement import (
-    AttachTransferStatement,
-    AttachTransferStatementRequest,
-)
 
 from fire.api.dependencies import (
     get_document_repo,
@@ -15,12 +12,16 @@ from fire.api.dependencies import (
 )
 from fire.api.schemas.transaction import PatchTransactionRequest, TransactionResponse
 from fire.application.use_cases.attach_receipt import AttachReceipt, AttachReceiptRequest
+from fire.application.use_cases.attach_transfer_statement import (
+    AttachTransferStatement,
+    AttachTransferStatementRequest,
+)
 from fire.domain.entities.transaction import Transaction
 from fire.infrastructure.llm.document_parser_factory import DocumentParserFactory
-from fire.infrastructure.logging import get_logger
 from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[TransactionResponse])
@@ -126,7 +127,6 @@ async def attach_receipt(
         transaction_repo=transaction_repo,
         file_storage=file_storage,
         llm_parser=parser_factory.get_image_parser(),
-        logger=get_logger("fire.application.use_cases.attach_receipt"),
     )
     items = await use_case.execute(
         AttachReceiptRequest(
@@ -141,7 +141,7 @@ async def attach_receipt(
     return [_to_response(i) for i in items]
 
 
-@router.post("/{transaction_id}/attach-transfer", response_model=dict)
+@router.post("/{transaction_id}/attach-transfer", response_model=list[TransactionResponse])
 async def attach_transfer_statement(
     transaction_id: UUID,
     account_name: str = Form(...),
@@ -150,8 +150,12 @@ async def attach_transfer_statement(
     document_repo=Depends(get_document_repo),
     file_storage=Depends(get_file_storage),
     parser_factory: DocumentParserFactory = Depends(get_parser_factory),
-) -> dict:
-    """Attach an investment bank statement PDF to a transfer transaction."""
+) -> list[TransactionResponse]:
+    """Attach an investment bank statement PDF and return all extracted transactions."""
+    logger.info(
+        "attach-transfer: tx=%s account=%s file=%s", transaction_id, account_name, file.filename
+    )
+
     transaction = await transaction_repo.get_by_id(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -164,9 +168,8 @@ async def attach_transfer_statement(
         transaction_repo=transaction_repo,
         file_storage=file_storage,
         llm_parser=parser_factory.get_parser_for_mime(mime_type),
-        logger=get_logger("fire.application.use_cases.attach_transfer_statement"),
     )
-    return await use_case.execute(
+    result = await use_case.execute(
         AttachTransferStatementRequest(
             user_id=transaction.user_id,
             transfer_transaction_id=transaction_id,
@@ -177,6 +180,10 @@ async def attach_transfer_statement(
             upload_date=date.today(),
         )
     )
+
+    saved = await transaction_repo.get_by_transfer_document(UUID(result["document_id"]))
+    logger.info("attach-transfer: returning %d transactions", len(saved))
+    return [_to_response(t) for t in saved]
 
 
 @router.get("/{transaction_id}/transfer-transactions", response_model=list[TransactionResponse])

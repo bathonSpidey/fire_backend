@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from fire.domain.entities.transaction import TransactionCategory, TransactionType
+from fire.domain.interfaces.services import ExtractedTransaction
 
 # ── Amount pattern ────────────────────────────────────────────────────────────
 # Matches: 1.234,56 or 1234,56 — optionally preceded by +/- for N26

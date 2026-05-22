@@ -25,6 +25,8 @@ class TransactionResponse(BaseModel):
     parent_transaction_id: UUID | None = None
     receipt_document_id: UUID | None = None
     is_receipt_item: bool = False
+    transfer_account_name: str | None = None
+    transfer_document_id: UUID | None = None
 
     model_config = {"from_attributes": True}
 

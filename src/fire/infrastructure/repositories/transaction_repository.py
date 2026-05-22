@@ -74,9 +74,17 @@ class TransactionRepository(ITransactionRepository):
 
     async def get_transfers_by_user(self, user_id: UUID) -> list[Transaction]:
         with self._session_factory() as session:
+            from sqlalchemy import or_
+
             rows = (
                 session.query(TransactionORM)
-                .filter_by(user_id=str(user_id), transaction_type="transfer")
+                .filter(
+                    TransactionORM.user_id == str(user_id),
+                    or_(
+                        TransactionORM.transaction_type == "transfer",
+                        TransactionORM.transfer_account_name.isnot(None),
+                    ),
+                )
                 .order_by(TransactionORM.date.desc())
                 .all()
             )
