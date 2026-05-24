@@ -106,6 +106,14 @@ class AttachTransferStatement:
             len(result.transactions),
             result.account_institution,
         )
+
+        # Delete any previously extracted transactions for this document
+        # so re-uploads produce clean results without stale entries
+        old_txs = await self._transaction_repo.get_by_transfer_document(document.id)
+        for old_tx in old_txs:
+            await self._transaction_repo.delete(old_tx.id)
+        if old_txs:
+            logger.info("AttachTransfer: deleted %d stale transactions", len(old_txs))
         logger.info(
             "AttachTransfer: LLM returned %d transactions raw_response_length=%d",
             len(result.transactions),
@@ -140,6 +148,7 @@ class AttachTransferStatement:
                 if extracted.category
                 else TransactionCategory.OTHER,
                 merchant=extracted.merchant,
+                is_investment_item=True,
             )
             logger.info(
                 "AttachTransfer: item[%d] id=%s desc=%s amount=%s date=%s doc=%s",

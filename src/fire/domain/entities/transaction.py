@@ -47,6 +47,7 @@ class Transaction:
     # Transfer / investment account attachment
     transfer_account_name: str | None = None  # e.g. "N26", "Commerzbank"
     transfer_document_id: UUID | None = None  # the attached investment PDF
+    is_investment_item: bool = False  # came from an attached bank statement
 
     @classmethod
     def create(
@@ -62,6 +63,7 @@ class Transaction:
         merchant: str | None = None,
         parent_transaction_id: UUID | None = None,
         transfer_account_name: str | None = None,
+        is_investment_item: bool = False,
     ) -> "Transaction":
         if amount < Decimal("0"):
             raise ValueError("Amount must be non-negative. Use transaction_type for direction.")
@@ -78,6 +80,7 @@ class Transaction:
             merchant=merchant,
             parent_transaction_id=parent_transaction_id,
             transfer_account_name=transfer_account_name,
+            is_investment_item=is_investment_item,
         )
 
     @property
