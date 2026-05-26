@@ -90,6 +90,7 @@ class TransactionRepository(ITransactionRepository):
             )
             return [_to_entity(r) for r in rows]
 
+
     async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]:
         with self._session_factory() as session:
             rows = (
@@ -99,6 +100,13 @@ class TransactionRepository(ITransactionRepository):
                 .all()
             )
             return [_to_entity(r) for r in rows]
+
+    async def delete_by_document(self, document_id: UUID) -> int:
+        """Delete transactions belonging to a document — no cascade. Used for re-extraction cleanup."""
+        with self._session_factory() as session:
+            count = session.query(TransactionORM).filter_by(document_id=str(document_id)).delete()
+            session.commit()
+            return count
 
     async def delete(self, transaction_id: UUID) -> None:
         with self._session_factory() as session:
@@ -152,6 +160,7 @@ def _to_orm(tx: Transaction) -> TransactionORM:
         receipt_document_id=str(tx.receipt_document_id) if tx.receipt_document_id else None,
         transfer_account_name=tx.transfer_account_name,
         transfer_document_id=str(tx.transfer_document_id) if tx.transfer_document_id else None,
+        is_investment_item=tx.is_investment_item,
     )
 
 
@@ -175,4 +184,5 @@ def _to_entity(orm: TransactionORM) -> Transaction:
         receipt_document_id=UUID(orm.receipt_document_id) if orm.receipt_document_id else None,
         transfer_account_name=orm.transfer_account_name,
         transfer_document_id=UUID(orm.transfer_document_id) if orm.transfer_document_id else None,
+        is_investment_item=bool(orm.is_investment_item),
     )

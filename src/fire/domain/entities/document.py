@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from datetime import date as Date
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -30,6 +32,9 @@ class Document:
     file_hash: str = ""
     processed_at: datetime | None = None
     error_message: str | None = None
+    closing_balance: Decimal | None = None
+    statement_date: Date | None = None  # end date of the statement period
+    account_name: str | None = None  # e.g. 'Sparkasse', 'N26'
 
     @classmethod
     def create(

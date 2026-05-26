@@ -4,7 +4,9 @@ These are NOT domain entities. Repositories translate between the two.
 No domain code ever imports from this module.
 """
 
+import json
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
@@ -65,6 +67,9 @@ class DocumentORM(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime)
     error_message: Mapped[str | None] = mapped_column(Text)
+    closing_balance: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    statement_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    account_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     user: Mapped["UserORM"] = relationship(back_populates="documents")
     transactions: Mapped[list["TransactionORM"]] = relationship(
@@ -95,6 +100,7 @@ class TransactionORM(Base):
     )
     transfer_account_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     transfer_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    is_investment_item: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (Index("ix_transactions_user_year_month", "user_id", "date"),)
 

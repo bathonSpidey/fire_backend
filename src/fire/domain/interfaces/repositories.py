@@ -56,6 +56,9 @@ class ITransactionRepository(ABC):
     async def get_by_document(self, document_id: UUID) -> list[Transaction]: ...
 
     @abstractmethod
+    async def delete_by_document(self, document_id: UUID) -> int: ...
+
+    @abstractmethod
     async def get_by_user_and_month(
         self, user_id: UUID, year: int, month: int
     ) -> list[Transaction]: ...
@@ -71,6 +74,7 @@ class ITransactionRepository(ABC):
 
     @abstractmethod
     async def get_transfers_by_user(self, user_id: UUID) -> list[Transaction]: ...
+
 
     @abstractmethod
     async def get_by_parent(self, parent_transaction_id: UUID) -> list[Transaction]: ...

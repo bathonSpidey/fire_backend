@@ -26,20 +26,26 @@ logger = logging.getLogger(__name__)
 
 @router.get("", response_model=list[TransactionResponse])
 async def list_transactions(
-    user_id: UUID,
+    user_id: UUID | None = None,
     year: int | None = None,
     month: int | None = None,
+    document_id: UUID | None = None,
     transaction_repo: TransactionRepository = Depends(get_transaction_repo),
 ) -> list[TransactionResponse]:
     """
-    List transactions for a user.
-    - Provide year + month to filter to a specific month.
-    - Omit both to get all transactions.
+    List transactions.
+    - document_id: return only transactions for that document
+    - user_id + year + month: filter by month
+    - user_id alone: all transactions for user
     """
-    if year is not None and month is not None:
+    if document_id is not None:
+        transactions = await transaction_repo.get_by_document(document_id)
+    elif user_id is not None and year is not None and month is not None:
         transactions = await transaction_repo.get_by_user_and_month(user_id, year, month)
-    else:
+    elif user_id is not None:
         transactions = await transaction_repo.get_all_by_user(user_id)
+    else:
+        raise HTTPException(status_code=400, detail="Provide user_id or document_id")
     return [_to_response(t) for t in transactions]
 
 
@@ -227,4 +233,5 @@ def _to_response(t: Transaction) -> TransactionResponse:
         is_receipt_item=t.parent_transaction_id is not None,
         transfer_account_name=t.transfer_account_name,
         transfer_document_id=t.transfer_document_id,
+        is_investment_item=t.is_investment_item,
     )

@@ -211,3 +211,51 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     return "\n".join(page.get_text() for page in doc)
+
+
+# ── Closing balance extraction ─────────────────────────────────────────────
+
+_AMT_RE = re.compile(r"([+\-]?\d{1,3}(?:\.\d{3})*,\d{2})")
+
+# (label_regex, balance_on_next_line)
+_ANCHORS = [
+    (re.compile(r"neuer\s+Kontostand", re.IGNORECASE), True),
+    (re.compile(r"Closing\s+Balance", re.IGNORECASE), False),
+    (re.compile(r"Endsaldo", re.IGNORECASE), False),
+    (re.compile(r"Kontostand\s+am\s+\d{2}\.\d{2}\.\d{4}", re.IGNORECASE), True),
+    (re.compile(r"Kontostand", re.IGNORECASE), True),
+]
+_DATE_RE = re.compile(r"Kontostand\s+am\s+(\d{2})\.(\d{2})\.(\d{4})", re.IGNORECASE)
+_WERT_RE = re.compile(r"Wertstellung\s+(\d{2})\.(\d{2})\.(\d{4})")
+
+
+def extract_closing_balance(text: str) -> tuple:
+    balance_str: str | None = None
+    date_str: str | None = None
+    tail = text[-4000:]
+
+    for anchor_re, next_line in _ANCHORS:
+        m = anchor_re.search(tail)
+        if not m:
+            continue
+        search_in = tail[m.end() : m.end() + 120]
+        am = _AMT_RE.search(search_in)
+        if am:
+            raw = am.group(1).replace(".", "").replace(",", ".")
+            try:
+                Decimal(raw)
+                balance_str = raw
+                break
+            except InvalidOperation:
+                continue
+
+    m2 = _DATE_RE.search(tail)
+    if m2:
+        date_str = f"{m2.group(3)}-{m2.group(2)}-{m2.group(1)}"
+    else:
+        dates = _WERT_RE.findall(tail)
+        if dates:
+            d, mo, y = dates[-1]
+            date_str = f"{y}-{mo}-{d}"
+
+    return balance_str, date_str

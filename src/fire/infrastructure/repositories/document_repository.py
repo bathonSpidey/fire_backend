@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,6 +41,16 @@ class DocumentRepository(IDocumentRepository):
             )
             return [_to_entity(r) for r in rows]
 
+    async def get_all_by_user(self, user_id: UUID) -> list[Document]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(DocumentORM)
+                .filter_by(user_id=str(user_id))
+                .order_by(DocumentORM.uploaded_at.desc())
+                .all()
+            )
+            return [_to_entity(r) for r in rows]
+
     async def delete(self, document_id: UUID) -> None:
         with self._session_factory() as session:
             session.query(DocumentORM).filter_by(id=str(document_id)).delete()
@@ -63,6 +75,9 @@ def _to_orm(doc: Document) -> DocumentORM:
         uploaded_at=doc.uploaded_at,
         processed_at=doc.processed_at,
         error_message=doc.error_message,
+        closing_balance=float(doc.closing_balance) if doc.closing_balance else None,
+        statement_date=str(doc.statement_date) if doc.statement_date else None,
+        account_name=doc.account_name,
     )
 
 
@@ -78,4 +93,7 @@ def _to_entity(orm: DocumentORM) -> Document:
         uploaded_at=orm.uploaded_at,
         processed_at=orm.processed_at,
         error_message=orm.error_message,
+        closing_balance=Decimal(str(orm.closing_balance)) if orm.closing_balance else None,
+        statement_date=date.fromisoformat(orm.statement_date) if orm.statement_date else None,
+        account_name=orm.account_name,
     )

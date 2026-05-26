@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
-from src.fire.domain.entities.document import DocumentStatus
-from src.fire.domain.entities.transaction import Transaction
-from src.fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
-from src.fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
+from fire.domain.entities.document import DocumentStatus
+from fire.domain.entities.transaction import Transaction
+from fire.domain.interfaces.repositories import IDocumentRepository, ITransactionRepository
+from fire.domain.interfaces.services import IFileStorage, ILLMDocumentParser
 
 
 @dataclass
@@ -41,6 +41,16 @@ class ExtractTransactions:
         await self._document_repo.update(document)
 
         try:
+            # Delete existing transactions for this document before re-extracting
+            # Uses delete_by_document (no cascade) to avoid destroying linked investment/receipt data
+            deleted = await self._transaction_repo.delete_by_document(document.id)
+            if deleted:
+                import logging as _l
+
+                _l.getLogger(__name__).info(
+                    "ExtractTransactions: cleared %d existing transactions", deleted
+                )
+
             file_bytes = await self._file_storage.read(Path(document.file_path))
             extraction = await self._llm_parser.parse(file_bytes, request.mime_type)
             transactions = [
@@ -57,8 +67,28 @@ class ExtractTransactions:
                 for extracted in extraction.transactions
             ]
             saved = await self._transaction_repo.save_batch(transactions)
+            # Persist closing balance if extracted
+            import logging as _log
+
+            _logger = _log.getLogger(__name__)
+            _logger.info(
+                "ExtractTransactions: closing_balance=%s statement_date=%s institution=%s",
+                extraction.closing_balance,
+                extraction.statement_period_end,
+                extraction.account_institution,
+            )
+            if extraction.closing_balance is not None:
+                document.closing_balance = extraction.closing_balance
+            if extraction.statement_period_end is not None:
+                document.statement_date = extraction.statement_period_end
+            if extraction.account_institution:
+                document.account_name = extraction.account_institution
             document.mark_processed()
             await self._document_repo.update(document)
+            _logger.info(
+                "ExtractTransactions: document saved with closing_balance=%s",
+                document.closing_balance,
+            )
             return saved
 
         except Exception as exc:

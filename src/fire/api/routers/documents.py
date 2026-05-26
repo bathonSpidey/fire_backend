@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 from uuid import UUID
 
@@ -10,7 +11,7 @@ from fire.api.dependencies import (
     get_parser_factory,
     get_transaction_repo,
 )
-from fire.api.schemas.document import DocumentResponse, UploadResponse
+from fire.api.schemas.document import BalanceEntry, DocumentResponse, UploadResponse
 from fire.application.use_cases.extract_transactions import (
     ExtractTransactions,
     ExtractTransactionsRequest,
@@ -22,6 +23,7 @@ from fire.infrastructure.repositories.document_repository import DocumentReposit
 from fire.infrastructure.repositories.transaction_repository import TransactionRepository
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 _SUPPORTED_MIME_TYPES = {
     "application/pdf",
@@ -33,21 +35,18 @@ _SUPPORTED_MIME_TYPES = {
 
 @router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    file: UploadFile = File(...),
     user_id: UUID = Form(...),
+    file: UploadFile = File(...),
     document_type: DocumentType = Form(default=DocumentType.UNKNOWN),
     ingest: IngestDocument = Depends(get_ingest_use_case),
-    parser_factory: DocumentParserFactory = Depends(get_parser_factory),
     document_repo: DocumentRepository = Depends(get_document_repo),
     transaction_repo: TransactionRepository = Depends(get_transaction_repo),
     file_storage=Depends(get_file_storage),
+    parser_factory: DocumentParserFactory = Depends(get_parser_factory),
 ) -> UploadResponse:
-    mime_type = file.content_type or "application/octet-stream"
+    mime_type = file.content_type or "application/pdf"
     if mime_type not in _SUPPORTED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type: {mime_type}. Supported: {_SUPPORTED_MIME_TYPES}",
-        )
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: {mime_type}")
 
     content = await file.read()
 
@@ -62,10 +61,9 @@ async def upload_document(
             document_type=document_type,
         )
     )
+    logger.info("upload: document id=%s is_new=%s", document.id, is_new)
 
-    # Step 2 — extract: always re-extract so the user gets fresh transactions
-    # For a duplicate file this clears old transactions and re-runs the parser,
-    # which is useful when the parser has been improved or settings changed.
+    # Step 2 — extract (cleans old transactions first, then re-extracts)
     parser = parser_factory.get_parser_for_mime(mime_type)
     extract = ExtractTransactions(
         document_repo=document_repo,
@@ -97,6 +95,26 @@ async def list_documents(
     return [_to_response(d) for d in documents]
 
 
+@router.get("/balances", response_model=list[BalanceEntry])
+async def list_balances(
+    user_id: UUID,
+    document_repo: DocumentRepository = Depends(get_document_repo),
+) -> list[BalanceEntry]:
+    """Return closing balances for all processed documents belonging to a user."""
+    docs = await document_repo.get_all_by_user(user_id)
+    return [
+        BalanceEntry(
+            document_id=d.id,
+            account_name=d.account_name,
+            statement_date=d.statement_date,
+            closing_balance=d.closing_balance,
+            document_type=d.document_type,
+        )
+        for d in docs
+        if d.closing_balance is not None
+    ]
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
     document_id: UUID,
@@ -112,6 +130,7 @@ async def get_document(
 async def delete_document(
     document_id: UUID,
     document_repo: DocumentRepository = Depends(get_document_repo),
+    file_storage=Depends(get_file_storage),
 ) -> None:
     document = await document_repo.get_by_id(document_id)
     if not document:
@@ -119,14 +138,14 @@ async def delete_document(
     await document_repo.delete(document_id)
 
 
-def _to_response(doc: Document) -> DocumentResponse:
+def _to_response(d: Document) -> DocumentResponse:
     return DocumentResponse(
-        id=doc.id,
-        user_id=doc.user_id,
-        filename=doc.filename,
-        document_type=doc.document_type,
-        status=doc.status,
-        uploaded_at=doc.uploaded_at,
-        processed_at=doc.processed_at,
-        error_message=doc.error_message,
+        id=d.id,
+        user_id=d.user_id,
+        filename=d.filename,
+        document_type=d.document_type,
+        status=d.status,
+        uploaded_at=d.uploaded_at,
+        processed_at=d.processed_at,
+        error_message=d.error_message,
     )

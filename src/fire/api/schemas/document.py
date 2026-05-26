@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from src.fire.domain.entities.document import DocumentStatus, DocumentType
+from fire.domain.entities.document import DocumentStatus, DocumentType
 
 
 class DocumentResponse(BaseModel):
@@ -17,6 +18,14 @@ class DocumentResponse(BaseModel):
     error_message: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class BalanceEntry(BaseModel):
+    document_id: UUID
+    account_name: str | None
+    statement_date: date | None
+    closing_balance: Decimal | None
+    document_type: DocumentType
 
 
 class UploadResponse(BaseModel):

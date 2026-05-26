@@ -89,6 +89,12 @@ class FakeTransactionRepository(ITransactionRepository):
     async def get_by_document(self, document_id: UUID) -> list[Transaction]:
         return [t for t in self._store.values() if t.document_id == document_id]
 
+    async def delete_by_document(self, document_id: UUID) -> int:
+        keys = [k for k, t in self._store.items() if t.document_id == document_id]
+        for k in keys:
+            del self._store[k]
+        return len(keys)
+
     async def get_by_user_and_month(
         self, user_id: UUID, year: int, month: int
     ) -> list[Transaction]:
