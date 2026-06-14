@@ -1,6 +1,6 @@
 import re
 
-from entry_processor.bank_entry_processor import BankEntryProcessor
+from readers.entry_processor.bank_entry_processor import BankEntryProcessor
 
 
 class N26EntryProcessor(BankEntryProcessor):

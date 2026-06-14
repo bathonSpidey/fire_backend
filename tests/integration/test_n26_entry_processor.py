@@ -1,6 +1,6 @@
 import pathlib
 
-from entry_processor.n26_entry_processor import N26EntryProcessor
+from readers.entry_processor.n26_entry_processor import N26EntryProcessor
 from readers.n26_reader import N26Reader
 
 file_path = pathlib.Path(__file__).parent / "data" / "n26statement.pdf"
