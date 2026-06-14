@@ -1,6 +1,6 @@
 import pathlib
 
-from Readers.SparkasseReader import SparkasseReader
+from readers.sparkasse_reader import SparkasseReader
 
 file_path = pathlib.Path(__file__).parent / "data" / "statement.pdf"
 

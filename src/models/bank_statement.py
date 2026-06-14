@@ -1,5 +1,6 @@
-from Models.BankTransaction import BankTransaction
 from pydantic import BaseModel
+
+from models.bank_transaction import BankTransaction
 
 
 class BankStatement(BaseModel):

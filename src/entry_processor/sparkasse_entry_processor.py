@@ -1,7 +1,8 @@
 import re
 from datetime import datetime
 
-from tests.integration.test_sparkasse_entry_processor import BankStatement, BankTransaction
+from models.bank_statement import BankStatement
+from models.bank_transaction import BankTransaction
 
 
 class SparkasseEntryProcessor:

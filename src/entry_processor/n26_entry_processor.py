@@ -1,9 +1,8 @@
-from Models.BankStatement import BankStatement
-from Models.BankTransaction import BankTransaction
-
-
 import re
 from datetime import datetime
+
+from models.bank_statement import BankStatement
+from models.bank_transaction import BankTransaction
 
 
 class N26EntryProcessor:

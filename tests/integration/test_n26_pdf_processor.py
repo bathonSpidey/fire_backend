@@ -1,6 +1,6 @@
 import pathlib
 
-from Readers.N26Reader import N26Reader
+from readers.n26_reader import N26Reader
 
 file_path = pathlib.Path(__file__).parent / "data" / "n26statement.pdf"
 
