@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from routes.bank_statement import router as bank_statement_router
+from routes.bank_statement_management import router as bank_statement_management_router
 
 app = FastAPI(
     title="Bank Statement Parser API",
@@ -20,6 +21,7 @@ app.add_middleware(
 
 # 2. Register Domain Feature Routers
 app.include_router(bank_statement_router)
+app.include_router(bank_statement_management_router)
 
 
 @app.get("/health", tags=["System"])
