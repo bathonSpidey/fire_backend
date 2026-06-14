@@ -1,8 +1,7 @@
-from tests.integration.test_sparkasse_entry_processor import BankStatement, BankTransaction
-
-
 import re
 from datetime import datetime
+
+from tests.integration.test_sparkasse_entry_processor import BankStatement, BankTransaction
 
 
 class SparkasseEntryProcessor:

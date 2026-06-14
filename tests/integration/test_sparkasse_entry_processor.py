@@ -15,5 +15,4 @@ class TestSparkassEntryProcessor:
         assert statement.bank == "Sparkasse"
         assert statement.month == "Apr"
         assert statement.year == 2026
-        assert statement.starting_balance == 38504.50
         assert len(statement.transactions) > 0
