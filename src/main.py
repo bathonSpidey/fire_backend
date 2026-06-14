@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import the router module explicitly
 from routes.bank_statement import router as bank_statement_router
 
 app = FastAPI(
