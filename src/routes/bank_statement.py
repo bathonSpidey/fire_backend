@@ -22,7 +22,7 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 )
 async def upload_bank_statement(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),  # 👈 Inject the DB session helper dependency
+    db: Session = Depends(get_db),
 ):
     if file.content_type != "application/pdf":
         raise HTTPException(
@@ -42,23 +42,44 @@ async def upload_bank_statement(
         # 1. Generate the structured Pydantic object
         structured_statement = processor.process(raw_tuples)
 
-        # 2. Map Pydantic data directly into your Alembic-generated SQLAlchemy Table Model
-        db_statement = DBBankStatement(
-            bank=structured_statement.bank,
-            month=structured_statement.month,
-            year=structured_statement.year,
-            starting_balance=structured_statement.starting_balance,
-            closing_balance=structured_statement.closing_balance,
-            # Serialize the nested Pydantic transaction objects into simple raw JSON dumps
-            transactions=[tx.model_dump() for tx in structured_statement.transactions],
+        # 2. Check-then-Act: Check if this specific statement already exists
+        existing_statement = (
+            db.query(DBBankStatement)
+            .filter(
+                DBBankStatement.bank == structured_statement.bank,
+                DBBankStatement.month == structured_statement.month,
+                DBBankStatement.year == structured_statement.year,
+            )
+            .first()
         )
 
-        # 3. Persist the record safely into SQLite
-        db.add(db_statement)
-        db.commit()
-        db.refresh(db_statement)
+        serialized_transactions = [tx.model_dump() for tx in structured_statement.transactions]
 
-        # 4. Return the validated Pydantic contract layer
+        if existing_statement:
+            # 3a. Idempotent Overwrite Strategy
+            existing_statement.starting_balance = structured_statement.starting_balance
+            existing_statement.closing_balance = structured_statement.closing_balance
+            existing_statement.transactions = serialized_transactions
+
+            # Target object tracking reference for final DB operations
+            db_record = existing_statement
+        else:
+            # 3b. Normal Append Strategy
+            db_record = DBBankStatement(
+                bank=structured_statement.bank,
+                month=structured_statement.month,
+                year=structured_statement.year,
+                starting_balance=structured_statement.starting_balance,
+                closing_balance=structured_statement.closing_balance,
+                transactions=serialized_transactions,
+            )
+            db.add(db_record)
+
+        # 4. Commit and synchronize unit of work changes back to SQLite
+        db.commit()
+        db.refresh(db_record)
+
+        # 5. Return the clean Pydantic layer contract data validation target
         return structured_statement
 
     except ValueError as val_err:
