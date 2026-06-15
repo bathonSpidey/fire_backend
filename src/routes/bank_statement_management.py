@@ -1,7 +1,4 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement
@@ -10,7 +7,6 @@ from models.bank_statement import BankStatement
 
 router = APIRouter(prefix="/statements/manage", tags=["Statement Management"])
 
-# Simple utility map to convert short English month names to sorting integers
 MONTH_MAP = {
     "Jan": 1,
     "Feb": 2,
@@ -31,8 +27,6 @@ MONTH_MAP = {
 def get_all_statements(db: Session = Depends(get_db)):
     """1. Get all statements ordered by year and month chronologically (latest first)."""
     statements = db.query(DBBankStatement).all()
-
-    # Python-side sort to accurately handle calendar month strings ("Apr", "Jan")
     statements.sort(key=lambda x: (x.year, MONTH_MAP.get(x.month, 0)), reverse=True)
     return statements
 
@@ -40,38 +34,60 @@ def get_all_statements(db: Session = Depends(get_db)):
 @router.get("/filter/month", response_model=list[BankStatement])
 def get_statements_by_month(
     month: str = Query(..., description="Short month name, e.g., 'Apr'"),
+    year: int = Query(
+        ..., description="Target calendar year, e.g., 2026"
+    ),  # 👈 Added Year parameter
     db: Session = Depends(get_db),
 ):
-    """2. Get all statements matching a specific month."""
-    statements = db.query(DBBankStatement).filter(DBBankStatement.month == month).all()
+    """2. Get all statements matching a specific month and year composite identifier."""
+    statements = (
+        db.query(DBBankStatement)
+        .filter(DBBankStatement.month == month, DBBankStatement.year == year)
+        .all()
+    )
     return statements
 
 
 @router.get("/filter/range", response_model=list[BankStatement])
-def get_statements_by_month_range(
-    start_month: str = Query(..., description="Start month, e.g., 'Jan'"),
-    end_month: str = Query(..., description="End month, e.g., 'Apr'"),
-    year: int = Query(..., description="Target calendar year, e.g., 2026"),
+def get_statements_by_range(
+    start_month: str = Query(..., description="Start month, e.g., 'Nov'"),
+    start_year: int = Query(..., description="Start year, e.g., 2025"),  # 👈 Added split years
+    end_month: str = Query(..., description="End month, e.g., 'Feb'"),
+    end_year: int = Query(..., description="End year, e.g., 2026"),  # 👈 Added split years
     db: Session = Depends(get_db),
 ):
-    """3. Get statements within a specific month range for a given year."""
-    start_idx = MONTH_MAP.get(start_month)
-    end_idx = MONTH_MAP.get(end_month)
+    """3. Get statements within a range that can dynamically span across different calendar years."""
+    start_m_idx = MONTH_MAP.get(start_month)
+    end_m_idx = MONTH_MAP.get(end_month)
 
-    if not start_idx or not end_idx:
+    if not start_m_idx or not end_m_idx:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid start or end month abbreviation provided.",
         )
 
-    # Fetch records for the targeted year
-    statements = db.query(DBBankStatement).filter(DBBankStatement.year == year).all()
+    # Fetch all records to do a comprehensive sequence comparison
+    all_statements = db.query(DBBankStatement).all()
 
-    # Filter list down to records sitting inside the range limits inclusively
+    # Convert year and month into a comparable continuous index (e.g., 2026 * 12 + 4 = 24316)
+    start_score = (start_year * 12) + start_m_idx
+    end_score = (end_year * 12) + end_m_idx
+
+    if start_score > end_score:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Start range parameters cannot be chronologically after the End range parameters.",
+        )
+
+    # Filter with cross-year tracking capability
     filtered_statements = [
-        s for s in statements if start_idx <= MONTH_MAP.get(s.month, 0) <= end_idx
+        s
+        for s in all_statements
+        if start_score <= (s.year * 12) + MONTH_MAP.get(s.month, 0) <= end_score
     ]
 
+    # Sort results latest first before returning
+    filtered_statements.sort(key=lambda x: (x.year, MONTH_MAP.get(x.month, 0)), reverse=True)
     return filtered_statements
 
 
@@ -98,7 +114,6 @@ def update_statement_by_month(
             detail=f"No bank statement record found for {month} {year}.",
         )
 
-    # Apply changes over individual column fields
     db_statement.bank = updated_data.bank
     db_statement.starting_balance = updated_data.starting_balance
     db_statement.closing_balance = updated_data.closing_balance

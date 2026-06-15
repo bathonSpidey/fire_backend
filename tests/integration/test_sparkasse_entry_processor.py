@@ -4,6 +4,7 @@ from readers.entry_processor.sparkasse_entry_processor import SparkasseEntryProc
 from readers.sparkasse_reader import SparkasseReader
 
 file_path = pathlib.Path(__file__).parent / "data" / "statement.pdf"
+file_may = pathlib.Path(__file__).parent / "data" / "statement_may.pdf"
 
 
 class TestSparkassEntryProcessor:
@@ -14,5 +15,15 @@ class TestSparkassEntryProcessor:
         statement = processor.process(transactions)
         assert statement.bank == "Sparkasse"
         assert statement.month == "Apr"
+        assert statement.year == 2026
+        assert len(statement.transactions) > 0
+
+    def test_read_may(self):
+        reader = SparkasseReader(file_may)
+        transactions = reader.read()
+        processor = SparkasseEntryProcessor()
+        statement = processor.process(transactions)
+        assert statement.bank == "Sparkasse"
+        assert statement.month == "May"
         assert statement.year == 2026
         assert len(statement.transactions) > 0

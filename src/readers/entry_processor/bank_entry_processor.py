@@ -23,11 +23,33 @@ class BankEntryProcessor(ABC):
         pass
 
     def _determine_statement_date(self, start_desc: str) -> tuple[str, int]:
-        """Extracts the short month name and target calendar statement year."""
-        day, month, year = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", start_desc).groups()
-        
-        # Hooks or adjustments like Sparkasse's month shift are handles smoothly
-        target_month = int(month) + 1 if day == "31" else int(month)
+        """Extracts the exact month name and calendar year from the statement header details."""
+        # Matches patterns like 'Kontoauszug 5/2026' or 'Kontoauszug 04/2026'
+        header_match = re.search(r"Kontoauszug\s+(\d{1,2})/(\d{4})", start_desc, re.IGNORECASE)
+
+        if header_match:
+            month_num = int(header_match.group(1))
+            year_num = int(header_match.group(2))
+
+            month_name = datetime(year_num, month_num, 1).strftime("%b")
+            return month_name, year_num
+
+        # Fallback to the original logic if it's N26 or a structure without the 'Kontoauszug' header
+        date_match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", start_desc)
+        if not date_match:
+            raise ValueError(
+                "Could not find a valid date or statement header configuration footprint."
+            )
+
+        day, month, year = date_match.groups()
+        # Safely forward shift month if it explicitly lands on the absolute tail end of a quarter/month
+        target_month = int(month) + 1 if int(day) >= 30 else int(month)
+
+        # Handle December to January roll-over safety edge-case smoothly
+        if target_month > 12:
+            target_month = 1
+            year = str(int(year) + 1)
+
         month_name = datetime(int(year), target_month, 1).strftime("%b")
         return month_name, int(year)
 
@@ -44,20 +66,16 @@ class BankEntryProcessor(ABC):
 
         for desc, amt in transactions[1:-1]:
             date_match = re.search(r"\d{2}\.\d{2}\.\d{4}", desc)
-            
+
             tx_date = date_match.group(0) if date_match else ""
-            raw_body = desc[date_match.end():].strip() if date_match else desc.strip()
-            
+            raw_body = desc[date_match.end() :].strip() if date_match else desc.strip()
+
             # Polymorphic execution steps
             clean_body = self._clean_description(raw_body)
             parsed_amount = self._parse_amount(amt)
 
             tx_list.append(
-                BankTransaction(
-                    date=tx_date, 
-                    description=clean_body, 
-                    amount=parsed_amount
-                )
+                BankTransaction(date=tx_date, description=clean_body, amount=parsed_amount)
             )
 
         return BankStatement(
