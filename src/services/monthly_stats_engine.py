@@ -25,16 +25,28 @@ class MonthlyStatsEngine:
                 category = tx.category
                 amount = tx.amount
 
-                # 2. Intercept and isolate your investment/transfer matrix
-                if category in ("INTERNAL_TRANSFER", "INTERNAL_TRANSFER_OUT", "TRANSFER"):
-                    if amount < 0:
-                        total_invested += abs(amount)
+                # 1. Ignore linked internal transfers completely (True Shuffling)
+                if category in ("INTERNAL_TRANSFER_OUT", "INTERNAL_TRANSFER_IN"):
                     continue
 
-                if category == "INTERNAL_TRANSFER_IN":
-                    continue  # Inbound legs don't count as new cash injections
+                # 2. Track Investment Execution Orders (True Wealth Building)
+                if category == "INVESTMENT_ORDER":
+                    if amount < 0:
+                        abs_amount = abs(amount)
+                        total_invested += abs_amount
+                        # Record it in categories, but DO NOT add to lifestyle_expenses
+                        category_totals[category] = category_totals.get(category, 0.0) + abs_amount
+                    continue
 
-                # 3. Standard track accumulation
+                # 3. Track Standalone Outbound Asset Moves (e.g., Sparkasse Fonds)
+                if category == "BANK_TRANSFER":
+                    if amount < 0:
+                        abs_amount = abs(amount)
+                        total_invested += abs_amount
+                        category_totals[category] = category_totals.get(category, 0.0) + abs_amount
+                    continue
+
+                # 4. Standard Flow: Regular Inflows & Lifestyle Consumption Costs
                 if amount > 0:
                     gross_income += amount
                     category_totals[category] = category_totals.get(category, 0.0) + amount
