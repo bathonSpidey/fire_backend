@@ -1,58 +1,33 @@
-# ── Stage 1: build dependencies ──────────────────────────────────────────────
-FROM python:3.12-alpine AS builder
+# 1. Use an official lightweight Python image
+FROM python:3.14-slim
 
+# 2. Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
+
+# 3. Establish the internal working directory
 WORKDIR /app
 
-RUN apk add --no-cache \
-    gcc \
-    musl-dev \
-    libffi-dev \
-    jpeg-dev \
-    zlib-dev \
-    freetype-dev
+# 4. Install 'uv' inside the container cleanly
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# 5. Copy configuration specs first to leverage layer caching
+COPY pyproject.toml uv.lock ./
 
-COPY pyproject.toml uv.lock* ./
-COPY src/ src/
+# 6. Install project dependencies without creating virtualenvs globally
+RUN uv sync --frozen --no-cache
 
-RUN uv sync --no-dev
+# 7. Copy the rest of the application source code
+COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
 
-# ── Stage 2: runtime ──────────────────────────────────────────────────────────
-FROM python:3.12-alpine AS runtime
+# 8. Make our custom boot script executable
+RUN chmod +x ./src/entrypoint.sh
 
-WORKDIR /app
+# 9. Expose port 8001 outside the container boundaries
+EXPOSE 8001
 
-RUN apk add --no-cache \
-    jpeg \
-    zlib \
-    freetype \
-    libstdc++
-
-# Create non-root user
-RUN addgroup -S fire && adduser -S -G fire fire
-
-COPY --from=builder /app/.venv /app/.venv
-COPY src/ src/
-COPY alembic/ alembic/
-COPY alembic.ini .
-
-# Create /data as root and give fire user ownership
-# This runs at BUILD time so the directory exists with correct permissions.
-# The volume mounts OVER /data at runtime — but Docker preserves ownership
-# of the mount point, so fire user can write into the volume.
-RUN mkdir -p /data/db /data/files \
-    && chown -R fire:fire /data /app
-
-USER fire
-
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app/src"
-
-EXPOSE 8000
-
-# mkdir at startup too — in case the named volume is brand new and empty
-CMD ["sh", "-c", \
-    "mkdir -p /data/db /data/files && \
-    alembic upgrade head && \
-    uvicorn fire.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+# 10. Hand execution over to our custom entrypoint script
+ENTRYPOINT ["./src/entrypoint.sh"]

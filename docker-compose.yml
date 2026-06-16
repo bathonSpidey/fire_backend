@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fire_backend_api
+    restart: always
+    ports:
+      - "8001:8001"
+    volumes:
+      # Mounts a local database volume track so your SQLite data persists on your machine
+      - ./data:/app/data
+    environment:
+      - ENV=development
