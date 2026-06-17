@@ -31,7 +31,7 @@ class TransactionClassifier:
         "SALARY": r"Lohn, Gehalt|DB Systel|Verdienstabrechnung",
         "RETURNS": r"Finanzamt|Erstatt|dividend",
         "TRAVEL": r"Deutsche Bahn|FlixBus|Eurowings|Ryanair|Lufthansa|Booking|Airbnb|Uber|Lyft|Hotel|Reise",
-        "BANK_TRANSFER": r"Investment|Fonds|investments",
+        "BANK_TRANSFER": r"Investment|Fonds|investments|Stocks|Etfs|Srocks",
         "INVESTMENT_ORDER": r"payment hold for buy",
     }
 
