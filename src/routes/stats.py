@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement, DBMonthlyStat
@@ -6,8 +7,19 @@ from database.session import get_db
 from models.bank_statement import BankStatement
 from models.financial_stats import MonthlyStatsResponse
 from services.monthly_stats_engine import MonthlyStatsEngine
+from services.period_stats_engine import PeriodStatsEngine
+from services.stats_orchestrator import StatsOrchestrator
 
 router = APIRouter(prefix="/stats", tags=["Financial Statistics"])
+
+MONTH_ORDER = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def get_month_string(numeric_month: int) -> str:
+    """Translates 1 -> 'Jan', 4 -> 'Apr'"""
+    if 1 <= numeric_month <= 12:
+        return MONTH_ORDER[numeric_month - 1]
+    raise ValueError("Invalid month integer")
 
 
 @router.get("/", response_model=MonthlyStatsResponse)
@@ -84,6 +96,21 @@ def get_or_calculate_monthly_stats(
     db.refresh(db_stats)
 
     return db_stats
+
+
+@router.get("/range")
+def get_range_stats(
+    start: str = Query(None, description="Format: YYYY-MM"),
+    end: str = Query(None, description="Format: YYYY-MM"),
+    db: Session = Depends(get_db),
+):
+    # Fallback default: Return rolling last 3 computed records instantly
+    if not start or not end:
+        records = db.query(DBMonthlyStat).order_by(DBMonthlyStat.year.desc(), DBMonthlyStat.month.desc()).limit(3).all()
+        return PeriodStatsEngine.aggregate_months([r.__dict__ for r in records])
+
+    # Direct pass-through execution
+    return StatsOrchestrator.get_clean_range_stats(start, end, db)
 
 
 @router.put("/update", response_model=MonthlyStatsResponse)
