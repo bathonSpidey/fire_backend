@@ -3,66 +3,94 @@ import pathlib
 import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
-from extractor.inventory_extractor import InventoryExtractor
-from models.inventory import GeminiReceiptContract
+# 🔗 We can safely inspect the DBReceipt model directly here for an early out check
+from database.models import DBReceipt
+from database.session import get_db
+from services.inventory_linker import InventoryLinker
+from services.transaction_matching_engine import TransactionMatchingEngine
 
-router = APIRouter(prefix="/inventory", tags=["Inventory Processing Engine"])
-
-# Instantiate the extractor once at module level to reuse the GenAI client session
-extractor = InventoryExtractor()
+router = APIRouter(prefix="/inventory", tags=["Inventory Pipeline Engine"])
 
 
-@router.post(
-    "/analyze-receipt",
-    response_model=GeminiReceiptContract,
-    status_code=status.HTTP_200_OK,
-    summary="Upload a receipt image or PDF to extract a structured Pydantic dataset",
-)
-async def analyze_receipt_upload(file: UploadFile = File(...)):
-    """
-    Accepts an image stream (PNG, JPEG) or a structural PDF document,
-    saves it safely to a temporary storage location, runs your multimodal
-    Gemini vision parsing pipeline, and returns your exact structured model layer.
-    """
-    # 1. Enforce strict extension filtering before touching disk
+@router.post("/upload-receipt", status_code=status.HTTP_201_CREATED)
+async def upload_and_persist_receipt(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    # 1. Enforce strict extension filtering boundaries
     allowed_extensions = {".png", ".jpg", ".jpeg", ".pdf"}
     file_path_suffix = pathlib.Path(file.filename).suffix.lower()
 
     if file_path_suffix not in allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type '{file_path_suffix}'. Supported parameters: {allowed_extensions}",
+            detail=f"Unsupported file type '{file_path_suffix}'.",
         )
 
-    # 2. Setup safe runtime paths
+    # 2. Setup temporary storage runtime structures
     temp_dir = pathlib.Path("/tmp/smartory_uploads")
     temp_dir.mkdir(parents=True, exist_ok=True)
     temp_file_path = temp_dir / f"uploaded_{file.filename}"
 
     try:
-        # 3. Stream raw file bytes directly to the storage destination
         with temp_file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # 4. Fire the existing verified extraction module logic using the local Path pointer
-        structured_receipt_payload = extractor.extract_structured_receipt(temp_file_path)
+        # 🚀 Move the linker instantiation here to fetch the payload first
+        inventory_linker = InventoryLinker(db=db)
 
-        return structured_receipt_payload
+        # Extract the structured payload out of Gemini first (before writing rows)
+        receipt_payload = inventory_linker.extractor.extract_structured_receipt(temp_file_path)
+        import datetime
 
-    except FileNotFoundError as fnf_err:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(fnf_err))
-    except Exception as e:
-        # Catch unexpected API problems or parsing exceptions cleanly
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Gemini processing failure context: {str(e)}",
+        purchase_date_obj = datetime.datetime.strptime(
+            receipt_payload.purchase_date, "%Y-%m-%d"
+        ).date()
+
+        # 🛡️ IDEMPOTENCY CHECK: Ensure this exact shopping trip hasn't been scanned yet
+        existing_receipt = (
+            db.query(DBReceipt)
+            .filter(
+                DBReceipt.store_name == receipt_payload.store_name,
+                DBReceipt.total_amount == receipt_payload.total_amount,
+                DBReceipt.purchase_date == purchase_date_obj,
+            )
+            .first()
         )
 
+        if existing_receipt:
+            # Drop an early return or raise an conflict error depending on preference
+            # Returning the existing structural info avoids breaking client-side workflows
+            return {
+                "status": "Skipped (Duplicate Detected)",
+                "receipt_id": existing_receipt.id,
+                "merchant": existing_receipt.store_name,
+                "linked_to_bank_ledger": existing_receipt.bank_statement_linked,
+                "message": "This receipt has already been processed and saved.",
+            }
+
+        # 3. If it's a completely new unique receipt, pass the file to get processed and linked
+        result = inventory_linker.process_and_persist_receipt(temp_file_path)
+
+        # Commit changes if the service returned cleanly without hitting an exception
+        db.commit()
+        return result
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Pipeline processing failure: {str(e)}",
+        )
     finally:
-        # 5. The absolute golden rule: always clean up your temporary disk blocks
+        # 4. Golden Rule: Keep disk storage clear of lingering artifacts
         if temp_file_path.exists():
-            try:
-                os.remove(temp_file_path)
-            except OSError:
-                pass  # Avoid halting the active request if file locks drop late
+            os.remove(temp_file_path)
+
+
+@router.post("/reconcile/force")
+def force_reconcile_ledger(year: int = 2026, db: Session = Depends(get_db)):
+
+    engine = TransactionMatchingEngine(db)
+    links_fixed = engine.reconcile_orphans(target_year=year)
+    db.commit()
+    return {"status": "Success", "connections_made": links_fixed}

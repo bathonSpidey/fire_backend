@@ -8,6 +8,7 @@ from database.models import DBBankStatement
 from database.session import get_db
 from models.bank_statement import BankStatement
 from readers.statement_orchestrator import StatementOrchestrator
+from services.transaction_matching_engine import TransactionMatchingEngine
 
 router = APIRouter(prefix="/statements", tags=["Bank Statements"])
 TEMP_DIR = pathlib.Path("/tmp/uploaded_statements")
@@ -56,12 +57,25 @@ async def upload_bank_statement(
         serialized_transactions = [tx.model_dump() for tx in structured_statement.transactions]
 
         if existing_statement:
+            # 🛡️ UNCLE BOB EDGE CASE CHECK: Preserve old links during a re-upload overwrite
+            # Index current link state by combining unique elements (date, amount, description)
+            existing_links = {
+                (tx["date"], tx["amount"], tx["description"]): tx.get("inventory_purchase_id")
+                for tx in existing_statement.transactions
+                if tx.get("inventory_purchase_id") is not None
+            }
+
+            # Map existing links back onto the newly parsed transactions list
+            for tx in serialized_transactions:
+                key = (tx["date"], tx["amount"], tx["description"])
+                if key in existing_links:
+                    tx["inventory_purchase_id"] = existing_links[key]
+
             # 3a. Idempotent Overwrite Strategy
             existing_statement.starting_balance = structured_statement.starting_balance
             existing_statement.closing_balance = structured_statement.closing_balance
             existing_statement.transactions = serialized_transactions
 
-            # Target object tracking reference for final DB operations
             db_record = existing_statement
         else:
             # 3b. Normal Append Strategy
@@ -75,16 +89,27 @@ async def upload_bank_statement(
             )
             db.add(db_record)
 
-        # 4. Commit and synchronize unit of work changes back to SQLite
+        # 💡 Force a flush here so the database handles registration parameters,
+        # making sure our db_record rows are fully visible to our queries before matching.
+        db.flush()
+
+        # 🚀 4. Trigger the Domain Matching Engine
+        # It scans backwards for any unlinked inventory items matching this year's timeline.
+        matcher = TransactionMatchingEngine(db)
+        matcher.reconcile_orphans(target_year=structured_statement.year)
+
+        # 5. Commit and synchronize unit of work changes back to SQLite
         db.commit()
         db.refresh(db_record)
 
-        # 5. Return the clean Pydantic layer contract data validation target
+        # 6. Return the clean Pydantic layer contract data validation target
         return structured_statement
 
     except ValueError as val_err:
+        db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(val_err))
     except Exception as err:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while analyzing the statement: {str(err)}",

@@ -1,7 +1,7 @@
 import datetime
 
-from sqlalchemy import JSON, Column, Date, DateTime, Float, ForeignKey, Integer, String
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import JSON, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
@@ -37,7 +37,8 @@ class DBMonthlyStat(Base):
 
     # Stores the raw dictionary breakdown: dict[str, CategorySummary]
     categories = Column(JSON, nullable=False)
-    
+
+
 class DBReceipt(Base):
     __tablename__ = "receipts"
 
@@ -47,6 +48,8 @@ class DBReceipt(Base):
     total_discount = Column(Float, default=0.0)
     purchase_date = Column(Date, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    bank_statement_linked = Column(Boolean, default=False, nullable=False)
+    items = relationship("DBInventoryItem", back_populates="receipt", cascade="all, delete-orphan")
 
 class DBInventoryItem(Base):
     __tablename__ = "inventory_items"
@@ -58,7 +61,8 @@ class DBInventoryItem(Base):
     quantity = Column(Integer, default=1)
     unit_cost = Column(Float, nullable=False)
     category = Column(String, nullable=False)  # Maps from ItemCategory Enum string
-    storage_condition = Column(String, nullable=False) # Maps from StorageCondition Enum string
+    storage_condition = Column(String, nullable=False)  # Maps from StorageCondition Enum string
     date_purchased = Column(Date, nullable=False)
-    date_expiry = Column(Date, nullable=True) # purchase_date + estimated_shelf_life_days
-    status = Column(String, default="Available") # Available, Consumed, Wasted
+    date_expiry = Column(Date, nullable=True)  # purchase_date + estimated_shelf_life_days
+    status = Column(String, default="Available")  # Available, Consumed, Wasted
+    receipt = relationship("DBReceipt", back_populates="items")

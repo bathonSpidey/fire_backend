@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes.bank_statement import router as bank_statement_router
 from routes.bank_statement_management import router as bank_statement_management_router
 from routes.inventory import router as inventory_router
+from routes.inventory_management import router as inventory_management_router
 from routes.stats import router as stats_router
 
 app = FastAPI(
@@ -26,6 +27,7 @@ app.include_router(bank_statement_router)
 app.include_router(bank_statement_management_router)
 app.include_router(stats_router)
 app.include_router(inventory_router)
+app.include_router(inventory_management_router)
 
 
 @app.get("/health", tags=["System"])
