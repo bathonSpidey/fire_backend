@@ -55,6 +55,9 @@ class GeminiReceiptContract(BaseModel):
     total_amount: float = Field(
         description="The final total balance paid matching the receipt bottom calculation line"
     )
+    total_discount: float | None = Field(
+        None, description="The total discount amount applied to the receipt"
+    )
     purchase_date: str = Field(
         description="The calendar day the transaction took place. Format: YYYY-MM-DD"
     )

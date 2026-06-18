@@ -6,3 +6,4 @@ class BankTransaction(BaseModel):
     description: str
     amount: float
     category: str | None = None
+    inventory_purchase_id: int | None = None

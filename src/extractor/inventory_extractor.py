@@ -4,19 +4,20 @@ import pathlib
 from google import genai
 from google.genai import types
 
+from config import settings
 from models.inventory import GeminiReceiptContract
 
 
 class InventoryExtractor:
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = settings.GEMINI_API_KEY.get_secret_value()
         if not api_key:
             raise ValueError("Missing critical GEMINI_API_KEY environment configuration variable.")
         self.client = genai.Client(api_key=api_key)
 
     def extract_structured_receipt(self, file_path: pathlib.Path) -> GeminiReceiptContract:
         """
-        Accepts a file path to an image or PDF receipt, sends the raw file bytes 
+        Accepts a file path to an image or PDF receipt, sends the raw file bytes
         directly to Gemini via Multimodal capabilities, and returns type-checked schema data.
         """
         if not file_path.exists():
@@ -57,7 +58,7 @@ class InventoryExtractor:
         try:
             # Pass the image part directly in the contents list along with the text prompt
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.1-flash-lite",
                 contents=[image_part, prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
