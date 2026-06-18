@@ -1,4 +1,6 @@
 import datetime
+import logging
+import sys
 from datetime import timedelta
 
 from sqlalchemy import extract
@@ -7,13 +9,24 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from database.models import DBBankStatement, DBReceipt
 
+# 🛠️ Robust Logger Initialization to force terminal stdout visibility
+logger = logging.getLogger("smartory.matching_engine")
+logger.setLevel(logging.DEBUG)
+
+# If no handlers exist yet, attach one directly to pipe to standard output
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
 
 class TransactionMatchingEngine:
     def __init__(self, db: Session):
         self.db = db
 
     def _parse_bank_date(self, date_str: str) -> datetime.date:
-        """Robust helper to parse multiple incoming bank ledger date formats."""
         for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
             try:
                 return datetime.datetime.strptime(date_str, fmt).date()
@@ -21,71 +34,106 @@ class TransactionMatchingEngine:
                 continue
         raise ValueError(f"Could not parse bank statement date format string: '{date_str}'")
 
-    def reconcile_orphans(self, target_year: int) -> int:
-        """Finds unlinked receipts and attempts to match them against bank transactions
+    def _get_month_name(self, month_idx: int) -> str:
+        months = [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+        ]
+        return months[month_idx - 1]
 
-        using an adaptive, multi-format matching strategy.
-        """
-        unlinked_receipts = (
-            self.db.query(DBReceipt)
-            .filter(
-                not DBReceipt.bank_statement_linked,
-                extract("year", DBReceipt.purchase_date) == target_year,
+    def reconcile_orphans(self, target_year: int, target_month: int = None) -> int:
+        month_label = f"Month: {target_month}" if target_month else "ALL MONTHS"
+        logger.info(f"====== STARTING RECONCILIATION RUN FOR {target_year} ({month_label}) ======")
+
+        # 1. Fetch target receipts (Fixed the 'not' syntax bug by using explicit == False)
+        receipt_query = self.db.query(DBReceipt).filter(
+            DBReceipt.bank_statement_linked == False,  # noqa: E712
+            extract("year", DBReceipt.purchase_date) == target_year,
+        )
+        if target_month:
+            receipt_query = receipt_query.filter(
+                extract("month", DBReceipt.purchase_date) == target_month
             )
-            .all()
-        )
 
-        if not unlinked_receipts:
-            return 0
+        unlinked_receipts = receipt_query.all()
+        logger.info(f"Found {len(unlinked_receipts)} UNLINKED receipts matching search parameters.")
 
-        statements = (
-            self.db.query(DBBankStatement).filter(DBBankStatement.year == target_year).all()
-        )
+        # 2. Fetch target bank statements
+        statement_query = self.db.query(DBBankStatement).filter(DBBankStatement.year == target_year)
+        if target_month:
+            month_str = self._get_month_name(target_month)
+            statement_query = statement_query.filter(DBBankStatement.month == month_str)
+
+        statements = statement_query.all()
+        logger.info(f"Found {len(statements)} relevant Bank Statement containers loaded.")
 
         links_established = 0
 
+        # 3. Execution Matching Matrix Loops
         for receipt in unlinked_receipts:
-            # Create standardized strings to look for embedded dates (e.g., "02.04.2026" or "2026-04-02")
-            receipt_dot_str = receipt.purchase_date.strftime("%d.%m.%Y")
-            receipt_dash_str = receipt.purchase_date.strftime("%Y-%m-%d")
+            logger.debug(
+                f"Evaluating Receipt ID {receipt.id} from '{receipt.store_name}' (€{receipt.total_amount})"
+            )
 
-            # Extend search window to 8 days to account for clearing lag
+            receipt_dot_str = receipt.purchase_date.strftime("%d.%m.%Y")  # "02.04.2026"
+            receipt_dash_str = receipt.purchase_date.strftime("%Y-%m-%d")  # "2026-04-02"
             max_clearing_window = receipt.purchase_date + timedelta(days=8)
 
+            match_found_for_this_receipt = False
+
             for statement in statements:
+                if match_found_for_this_receipt:
+                    break
+
                 tx_list = list(statement.transactions)
                 modified_any_row = False
 
-                for tx in tx_list:
+                for idx, tx in enumerate(tx_list):
                     if tx.get("inventory_purchase_id") is not None:
                         continue
 
-                    # Safe parsing via adaptive format lookups
                     try:
                         tx_date_obj = self._parse_bank_date(tx["date"])
                     except ValueError:
-                        continue  # Log and skip corrupted row formats safely
+                        continue
 
-                    # Absolute value check for the transaction amount (e.g., matching -27.07 against 27.07)
                     amounts_match = abs(abs(tx["amount"]) - receipt.total_amount) < 0.01
                     merchant_matches = receipt.store_name.lower() in tx["description"].lower()
+                    within_clearing_window = (
+                        receipt.purchase_date <= tx_date_obj <= max_clearing_window
+                    )
+                    date_token_in_text = (receipt_dot_str in tx["description"]) or (
+                        receipt_dash_str in tx["description"]
+                    )
+
+                    # Trace out evaluation checks for candidates with similar totals or name footprints
+                    if merchant_matches or abs(abs(tx["amount"]) - receipt.total_amount) < 5.00:
+                        logger.debug(
+                            f"   -> Testing against transaction variant: Date={tx['date']} | Amount={tx['amount']}\n"
+                            f"      Checks: amounts_match={amounts_match}, merchant_matches={merchant_matches}, "
+                            f"within_window={within_clearing_window}, text_token={date_token_in_text}"
+                        )
 
                     if amounts_match and merchant_matches:
-                        # Strategy A: It matches within our safe 8-day clearing window
-                        within_clearing_window = (
-                            receipt.purchase_date <= tx_date_obj <= max_clearing_window
-                        )
-
-                        # Strategy B: Explicit matching date token is found embedded inside the raw description text
-                        date_token_in_text = (receipt_dot_str in tx["description"]) or (
-                            receipt_dash_str in tx["description"]
-                        )
-
                         if within_clearing_window or date_token_in_text:
+                            logger.info(
+                                f"==== 🎉 MATCH FOUND! Linking Receipt {receipt.id} to Statement {statement.id} Tx #{idx} ===="
+                            )
                             tx["inventory_purchase_id"] = receipt.id
                             receipt.bank_statement_linked = True
 
                             modified_any_row = True
+                            match_found_for_this_receipt = True
                             links_established += 1
                             break
 
@@ -94,4 +142,7 @@ class TransactionMatchingEngine:
                     flag_modified(statement, "transactions")
                     break
 
+        logger.info(
+            f"====== RECONCILIATION RUN COMPLETE. Total Links Made: {links_established} ======"
+        )
         return links_established

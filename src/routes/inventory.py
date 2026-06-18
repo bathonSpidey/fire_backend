@@ -2,7 +2,7 @@ import os
 import pathlib
 import shutil
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 # 🔗 We can safely inspect the DBReceipt model directly here for an early out check
@@ -94,3 +94,27 @@ def force_reconcile_ledger(year: int = 2026, db: Session = Depends(get_db)):
     links_fixed = engine.reconcile_orphans(target_year=year)
     db.commit()
     return {"status": "Success", "connections_made": links_fixed}
+
+
+@router.post("/monthly-sync", status_code=status.HTTP_200_OK)
+def trigger_monthly_ledger_sync(
+    year: int = Query(..., description="Target execution year, e.g. 2026"),
+    month: int = Query(
+        ..., ge=1, le=12, description="Target execution numerical month calendar index (1-12)"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Triggers a targeted monthly reconciliation pass, matching lone receipts
+
+    against corresponding bank logs loaded for that month.
+    """
+    engine = TransactionMatchingEngine(db)
+    links_established = engine.reconcile_orphans(target_year=year, target_month=month)
+
+    db.commit()
+    return {
+        "status": "Synchronization phase execution successfully completed.",
+        "year": year,
+        "month": month,
+        "links_established_count": links_established,
+    }

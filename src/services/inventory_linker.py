@@ -57,7 +57,9 @@ class InventoryLinker:
             self.db.add(db_item)
 
         # 4. Trigger Domain Matching Engine
-        linked_count = self.matcher.reconcile_orphans(target_year=purchase_date_obj.year)
+        linked_count = self.matcher.reconcile_orphans(
+            target_year=purchase_date_obj.year, target_month=purchase_date_obj.month
+        )
 
         return {
             "receipt_id": db_receipt.id,
