@@ -13,16 +13,16 @@ class InventoryDB:
 
     def get_receipts_with_items_by_month(self, year: int, month: int) -> list[DBReceipt]:
         """Fetches all parent receipts along with their nested child inventory items
-
-        purchased within a targeted calendar month. Uses eager loading to optimize DB trips.
+        purchased within a targeted calendar month, ordered chronologically (ascending).
         """
         return (
             self.db.query(DBReceipt)
-            .options(joinedload(DBReceipt.items))  # ⚡ Eagerly joins and pre-loads nested arrays
+            .options(joinedload(DBReceipt.items))
             .filter(
                 extract("year", DBReceipt.purchase_date) == year,
                 extract("month", DBReceipt.purchase_date) == month,
             )
+            .order_by(DBReceipt.purchase_date.asc())  # ◀️ Added chronological ascending sort
             .all()
         )
 
