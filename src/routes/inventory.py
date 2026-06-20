@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 # 🔗 We can safely inspect the DBReceipt model directly here for an early out check
 from database.models import DBReceipt
 from database.session import get_db
+from models.inventory_stats import MonthlyInventoryStats
+from services.inventory_db import InventoryDB
 from services.inventory_linker import InventoryLinker
+from services.inventory_stats_engine import InventoryStatsEngine
 from services.transaction_matching_engine import TransactionMatchingEngine
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Pipeline Engine"])
@@ -118,3 +121,22 @@ def trigger_monthly_ledger_sync(
         "month": month,
         "links_established_count": links_established,
     }
+
+
+@router.get(
+    "/receipts/monthly-stats", response_model=MonthlyInventoryStats, status_code=status.HTTP_200_OK
+)
+def get_monthly_inventory_dashboard_stats(
+    year: int = Query(..., ge=2020),
+    month: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+):
+    """Calculates rich summary analytics, brand loyalty, spending ratios,
+
+    and fresh item decay timelines without triggering slow LLM workloads.
+    """
+    inventory_db = InventoryDB(db)
+    # Reuses the exact eager loading joinedload function we created earlier
+    raw_receipts = inventory_db.get_receipts_with_items_by_month(year, month)
+
+    return InventoryStatsEngine.generate_monthly_metrics(year, month, raw_receipts)

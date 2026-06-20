@@ -1,17 +1,33 @@
 import datetime
 
 from sqlalchemy import extract
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload  # ◀️ Added joinedload here
 
-from database.models import DBInventoryItem
+# 🔗 Import BOTH data structures from your models layer
+from database.models import DBInventoryItem, DBReceipt
 
 
 class InventoryDB:
     def __init__(self, db: Session):
         self.db = db
 
+    def get_receipts_with_items_by_month(self, year: int, month: int) -> list[DBReceipt]:
+        """Fetches all parent receipts along with their nested child inventory items
+        purchased within a targeted calendar month, ordered chronologically (ascending).
+        """
+        return (
+            self.db.query(DBReceipt)
+            .options(joinedload(DBReceipt.items))  # ⚡ Eager loading eliminates N+1 query loops
+            .filter(
+                extract("year", DBReceipt.purchase_date) == year,
+                extract("month", DBReceipt.purchase_date) == month,
+            )
+            .order_by(DBReceipt.purchase_date.asc())  # Chronological ascending sort
+            .all()
+        )
+
     def get_by_month(self, year: int, month: int) -> list[DBInventoryItem]:
-        """Fetches all items purchased within a targeted calendar month."""
+        """Fetches all flat individual items purchased within a targeted calendar month."""
         return (
             self.db.query(DBInventoryItem)
             .filter(
