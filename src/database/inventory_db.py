@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import extract
+from sqlalchemy import extract, func
 from sqlalchemy.orm import Session, joinedload
 
 # 🔗 Import both classes from your models file
@@ -78,3 +78,19 @@ class InventoryDB:
 
         self.db.delete(receipt)
         return True
+    
+    def update_item_status_by_name_and_date(
+        self, target_date: datetime.date, item_name: str, new_status: str
+    ) -> int:
+        """Updates the tracking status of a specific item matched by its name and 
+        purchase date. Returns the number of affected rows.
+        """
+        affected_rows = (
+            self.db.query(DBInventoryItem)
+            .filter(
+                DBInventoryItem.date_purchased == target_date,
+                func.lower(DBInventoryItem.name) == item_name.lower().strip()
+            )
+            .update({"status": new_status}, synchronize_session="fetch")
+        )
+        return affected_rows

@@ -48,7 +48,7 @@ class InventoryExtractor:
         Rules:
         1. Clean up messy or shortened shorthand item text names into recognizable household products.
         2. Assign accurate categories and storage conditions based on common culinary/household knowledge. 
-        3. Infer shelf life based on the item type (e.g., Fresh milk in 'Kept Cool' -> ~7 days, Eggs -> ~14 days, Canned goods -> Null).
+        3. Infer shelf life based on the item type (e.g., Fresh milk in 'Kept Cool' -> ~7 days, Eggs -> ~14 days, Canned goods -> Null). Chicken, fish, shrimps and other meats are usually kept frozen and have a shelf life of around 6 months. Electronics, hardware and non-perishables should have null shelf life.
         4. Match all outputs exactly against the required JSON schema structures.
         """
 

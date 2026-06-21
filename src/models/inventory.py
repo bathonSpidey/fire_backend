@@ -1,5 +1,5 @@
+from datetime import date
 from enum import StrEnum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,13 @@ class StorageCondition(StrEnum):
     FROZEN = "Frozen"  # Deep Freezer
 
 
+class ItemStatus(StrEnum):
+    AVAILABLE = "Available"  # In storage, ready to use
+    CONSUMED = "Consumed"  # Successfully used up completely
+    SPOILED = "Spoiled"  # Expired/rotted before consumption
+    DISCARDED = "Discarded"  # Throw out for non-decay reasons (packaging damage, etc.)
+
+
 class GeminiExtractedItem(BaseModel):
     name: str = Field(
         description="Cleaned, recognizable product name in English or German (e.g., 'Cornflakes' instead of 'n Flakes')"
@@ -46,6 +53,9 @@ class GeminiExtractedItem(BaseModel):
         None,
         description="Brand name if explicitly visible on the receipt line (e.g., 'K-Classic', 'Rauch')",
     )
+    status: ItemStatus = Field(
+        default=ItemStatus.AVAILABLE, description="The current status of the item in the inventory"
+    )
 
 
 class GeminiReceiptContract(BaseModel):
@@ -63,4 +73,13 @@ class GeminiReceiptContract(BaseModel):
     )
     items: list[GeminiExtractedItem] = Field(
         description="Granular collection array containing itemized product info details"
+    )
+
+
+class ItemStatusUpdatePayload(BaseModel):
+    item_name: str = Field(..., description="The name of the target product (case-insensitive)")
+    purchase_date: date = Field(..., description="The calendar day the receipt was issued")
+    status: ItemStatus = Field(
+        ...,
+        description="The target lifecycle update state: Available, Consumed, Spoiled, Discarded",
     )
