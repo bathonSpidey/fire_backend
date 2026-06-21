@@ -5,12 +5,13 @@ import shutil
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
+from database.inventory_db import InventoryDB
+
 # 🔗 We can safely inspect the DBReceipt model directly here for an early out check
 from database.models import DBReceipt
 from database.session import get_db
 from models.inventory import ItemStatusUpdatePayload
 from models.inventory_stats import MonthlyInventoryStats
-from services.inventory_db import InventoryDB
 from services.inventory_linker import InventoryLinker
 from services.inventory_stats_engine import InventoryStatsEngine
 from services.transaction_matching_engine import TransactionMatchingEngine
@@ -145,33 +146,32 @@ def get_monthly_inventory_dashboard_stats(
 
 @router.put("/item/status", status_code=status.HTTP_200_OK)
 def update_individual_item_lifecycle_status(
-    payload: ItemStatusUpdatePayload,
-    db: Session = Depends(get_db)
+    payload: ItemStatusUpdatePayload, db: Session = Depends(get_db)
 ):
-    """Updates the tracking status flag of a single inventory item matching 
+    """Updates the tracking status flag of a single inventory item matching
 
     the item name and original receipt purchase date parameters exactly.
     """
     inventory_db = InventoryDB(db)
-    
+
     # Execute state change via the case-insensitive database wrapper method
     modified_count = inventory_db.update_item_status_by_name_and_date(
         target_date=payload.purchase_date,
         item_name=payload.item_name,
-        new_status=payload.status.value  # Extracted Enum string value ("Consumed", etc.)
+        new_status=payload.status.value,  # Extracted Enum string value ("Consumed", etc.)
     )
-    
+
     if modified_count == 0:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"No inventory item tracked found with the name '{payload.item_name}' "
                 f"purchased on date {payload.purchase_date}."
-            )
+            ),
         )
-        
+
     db.commit()
     return {
         "status": "Success",
-        "detail": f"Successfully updated status to '{payload.status.value}' for {modified_count} item instance(s)."
+        "detail": f"Successfully updated status to '{payload.status.value}' for {modified_count} item instance(s).",
     }
