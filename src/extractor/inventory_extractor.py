@@ -46,7 +46,7 @@ class InventoryExtractor:
         Your job is to visually inspect uploaded receipts or invoices and map them into structured inventory entries.
         
         Rules:
-        1. Clean up messy or shortened shorthand item text names into recognizable household products.
+        1. Clean up messy or shortened shorthand item text names into recognizable household products along with the weight or quantity if present. If you are unsure with the name then  just extract the name as it is. Do not guess or hallucinate. For example if you see "Sonntagsbr.330g" either you extract as it is or you do Sonntagsbrötchen 330g not Sunday roast.
         2. Assign accurate categories and storage conditions based on common culinary/household knowledge. 
         3. Infer shelf life based on the item type (e.g., Fresh milk in 'Kept Cool' -> ~7 days, Eggs -> ~14 days, Canned goods -> Null). Chicken, fish, shrimps and other meats are usually kept frozen and have a shelf life of around 6 months. Electronics, hardware and non-perishables should have null shelf life.
         4. Match all outputs exactly against the required JSON schema structures.
