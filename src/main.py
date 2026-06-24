@@ -6,6 +6,7 @@ from routes.bank_statement_management import router as bank_statement_management
 from routes.inventory import router as inventory_router
 from routes.inventory_analysis import router as inventory_analysis_router
 from routes.inventory_management import router as inventory_management_router
+from routes.inventory_stats import router as inventory_stats_router
 from routes.stats import router as stats_router
 
 app = FastAPI(
@@ -30,6 +31,7 @@ app.include_router(stats_router)
 app.include_router(inventory_router)
 app.include_router(inventory_management_router)
 app.include_router(inventory_analysis_router)
+app.include_router(inventory_stats_router)
 
 
 @app.get("/health", tags=["System"])
