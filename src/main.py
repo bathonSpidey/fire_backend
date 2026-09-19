@@ -1,18 +1,32 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from database.migrate import upgrade_to_head
 from routes.bank_statement import router as bank_statement_router
 from routes.bank_statement_management import router as bank_statement_management_router
 from routes.inventory import router as inventory_router
 from routes.inventory_analysis import router as inventory_analysis_router
 from routes.inventory_management import router as inventory_management_router
 from routes.inventory_stats import router as inventory_stats_router
+from routes.receipt_ingest import router as receipt_ingest_router
 from routes.stats import router as stats_router
+from services import ingest_worker
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    upgrade_to_head()
+    ingest_worker.start()
+    yield
+    ingest_worker.stop()
+
 
 app = FastAPI(
     title="Bank Statement Parser API",
     description="Clean Architecture API to extract structured data from statement PDFs.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # 1. Mount System Middlewares (e.g., CORS)
@@ -32,6 +46,7 @@ app.include_router(inventory_router)
 app.include_router(inventory_management_router)
 app.include_router(inventory_analysis_router)
 app.include_router(inventory_stats_router)
+app.include_router(receipt_ingest_router)
 
 
 @app.get("/health", tags=["System"])

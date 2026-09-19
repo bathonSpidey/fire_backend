@@ -19,13 +19,25 @@ class AppSettings(BaseSettings):
     DEBUG: bool = False
 
     # 2. Database Connection Parameters
-    DATABASE_URL: str = "sqlite:///./smartory.db"
+    # Absolute so subprocesses (the Claude MCP server) resolve the same file
+    # regardless of their working directory.
+    FIRE_DATABASE_URL: str = f"sqlite:///{(ROOT_DIR / 'bank_statements.db').as_posix()}"
 
-    # 3. Third-Party Sensitive API Keys
+    # 3. Household workspace: uploaded files are filed as
+    #    <root>/<Owner>/<Month_Year>/<file>, after extraction reveals the month.
+    FIRE_WORKSPACE_ROOT: pathlib.Path = ROOT_DIR / "workspace"
+    FIRE_OWNERS: list[str] = ["Abir", "Lena"]
+
+    # 4. Claude Code (headless) used for receipt extraction, logged-in subscription
+    CLAUDE_MODEL: str = "claude-sonnet-5"
+    CLAUDE_EFFORT: str = "medium"
+    CLAUDE_TIMEOUT_SECONDS: int = 240
+
+    # 5. Third-Party Sensitive API Keys (legacy Gemini path, optional now)
     # Using SecretStr prevents the key from leaking into raw print logs or error traces
-    GEMINI_API_KEY: SecretStr
+    GEMINI_API_KEY: SecretStr = SecretStr("")
 
-    # 4. Bind Pydantic directly to your physical .env file configuration
+    # 6. Bind Pydantic directly to your physical .env file configuration
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
         env_file_encoding="utf-8",

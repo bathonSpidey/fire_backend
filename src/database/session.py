@@ -1,7 +1,9 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-DATABASE_URL = "sqlite:///./bank_statements.db"
+from config import settings
+
+DATABASE_URL = settings.FIRE_DATABASE_URL
 
 # connect_args={"check_same_thread": False} is required exclusively for SQLite in FastAPI
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})

@@ -13,3 +13,5 @@ tests/integration/data/
 *.db
 .env
 data/
+workspace/
+bank_statements.db.backup-d19696d083f8-20260919-234420
