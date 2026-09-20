@@ -16,7 +16,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement, DBBankTransaction
-from services.statement_store import MONTH_ABBR
+from services.statement_store import MONTH_ABBR, sync_statement_json
 
 BROKERS = ("N26", "Commerzbank", "Sparkasse")  # banks that can hold investment bookings
 ALWAYS_LISTED = ("N26", "Commerzbank")  # tabs that exist even before their first booking
@@ -26,6 +26,12 @@ COST_KINDS = ("fee", "spend")  # account fees and taxes on the depot
 
 _WKN = re.compile(r"WPKNR:\s*([A-Z0-9]{6})")
 _ISIN = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
+
+
+# What the household set by hand on a booking the reader took for an investment (money moving into a
+# depot is a transfer between own accounts; the buys themselves are booked on the depot's statement).
+MANUAL_REASON = "set by household: not an investment"
+TRANSFER = "internal_transfer"
 
 
 class InvestmentError(ValueError):
@@ -130,6 +136,54 @@ def _year_rows(months: list[dict]) -> list[dict]:
     return rows
 
 
+def _moved_out(db: Session, broker: str | None) -> list[dict]:
+    """Bookings the household took out of the investments by hand (so they can bring them back)."""
+    query = (
+        db.query(DBBankTransaction, DBBankStatement.bank)
+        .join(DBBankStatement, DBBankStatement.id == DBBankTransaction.statement_id)
+        .filter(
+            DBBankStatement.bank.in_(BROKERS), DBBankTransaction.kind == TRANSFER,
+            DBBankTransaction.transfer_group.is_(None), DBBankTransaction.link_reason == MANUAL_REASON,
+        )
+    )
+    if broker:
+        query = query.filter(DBBankStatement.bank == broker)
+    return [
+        {"id": tx.id, "broker": bank, "date": tx.booking_date.isoformat(), "amount": round(-tx.amount, 2),
+         "text": (tx.description or tx.counterparty)[:90]}
+        for tx, bank in query.order_by(DBBankTransaction.booking_date)
+    ]
+
+
+def set_booking_kind(db: Session, tx_id: int, kind: str) -> DBBankTransaction:
+    """Move a booking between 'investment' and 'transfer between my own accounts', by hand.
+
+    Only a booking the reader marked as an investment can be moved out, and only one that was moved
+    out by hand can be brought back: a transfer the app paired with its other side is left alone.
+    (Reading the same statement again starts from the reader's opinion again.)
+    """
+    tx = db.get(DBBankTransaction, tx_id)
+    if tx is None:
+        raise LookupError(f"No booking #{tx_id}.")
+    if tx.statement.bank not in BROKERS:
+        raise InvestmentError("Only bookings on N26, Commerzbank or Sparkasse statements can be changed here.")
+    if kind == TRANSFER:
+        if tx.kind != "investment":
+            raise InvestmentError("Only an investment booking can be marked as a transfer.")
+        tx.kind, tx.category = TRANSFER, None
+        tx.link_status, tx.link_reason = "confirmed", MANUAL_REASON
+    elif kind == "investment":
+        if not (tx.kind == TRANSFER and tx.transfer_group is None and tx.link_reason == MANUAL_REASON):
+            raise InvestmentError("Only a booking you moved out of the investments can be moved back.")
+        tx.kind, tx.link_status, tx.link_reason = "investment", None, None
+    else:
+        raise InvestmentError("A booking can be an 'investment' or an 'internal_transfer'.")
+    db.flush()
+    sync_statement_json(db, tx.statement)  # the Statements page reads this copy
+    db.commit()
+    return tx
+
+
 def summary(db: Session, broker: str | None = None, today: datetime.date | None = None) -> dict:
     """Everything the investment pages show, for one broker or for all of them (`broker=None`)."""
     if broker is not None and broker not in BROKERS:
@@ -231,6 +285,7 @@ def summary(db: Session, broker: str | None = None, today: datetime.date | None 
         "months": months,
         "instruments": instruments,
         "unknown": {"net": round(sum(b["amount"] for b in unknown), 2), "count": len(unknown)},
+        "moved_out": _moved_out(db, broker),
         "costs": {"total": round(sum(c["amount"] for c in costs), 2), "items": costs},
         "received": {"total": round(sum(r["amount"] for r in received), 2), "items": received},
         "bookings": [

@@ -228,3 +228,106 @@ def test_the_module_is_read_only(db):
     before = db.query(DBBankTransaction).count()
     summary(db, None, TODAY)
     assert db.query(DBBankTransaction).count() == before and investments.BROKERS == ("N26", "Commerzbank", "Sparkasse")
+
+
+# ── deciding by hand that a booking is a transfer, not an investment ─────────────────────────
+def sparkasse_fund_order(db):
+    st = statement(db, "Sparkasse", "Apr")
+    return book(db, st, D(2026, 4, 24), -120.0, "Abir", "Auftrag online Abir fonds DATUM 24.04.2026")
+
+
+def test_a_booking_moved_out_of_the_investments_no_longer_counts_and_can_come_back(db):
+    tx = sparkasse_fund_order(db)
+    n26_buy(db, statement(db, "N26", "Apr"), D(2026, 4, 7), 10.0)
+    assert summary(db, None, TODAY)["totals"]["net"] == 130.0
+
+    investments.set_booking_kind(db, tx.id, "internal_transfer")
+    moved = summary(db, None, TODAY)
+    assert moved["totals"]["net"] == 10.0
+    assert [b["broker"] for b in moved["brokers"]] == ["N26", "Commerzbank"]  # Sparkasse has no investments now
+    assert [(m["id"], m["amount"], m["broker"]) for m in moved["moved_out"]] == [(tx.id, 120.0, "Sparkasse")]
+
+    investments.set_booking_kind(db, tx.id, "investment")
+    back = summary(db, None, TODAY)
+    assert back["totals"]["net"] == 130.0 and back["moved_out"] == []
+
+
+def test_moving_a_booking_out_is_remembered_as_the_households_decision(db):
+    tx = sparkasse_fund_order(db)
+    investments.set_booking_kind(db, tx.id, "internal_transfer")
+    db.refresh(tx)
+    assert (tx.kind, tx.link_status, tx.link_reason) == ("internal_transfer", "confirmed", investments.MANUAL_REASON)
+    assert tx.category is None and tx.transfer_group is None
+
+
+def test_moved_out_bookings_are_listed_per_broker(db):
+    tx = sparkasse_fund_order(db)
+    investments.set_booking_kind(db, tx.id, "internal_transfer")
+    assert len(summary(db, "Sparkasse", TODAY)["moved_out"]) == 1
+    assert summary(db, "N26", TODAY)["moved_out"] == []
+
+
+def test_only_investment_bookings_can_be_moved_out(db):
+    st = statement(db, "N26")
+    spend = book(db, st, D(2026, 1, 3), -30.0, "Rewe", "groceries", kind="spend")
+    with pytest.raises(InvestmentError):
+        investments.set_booking_kind(db, spend.id, "internal_transfer")
+
+
+def test_a_transfer_the_app_paired_itself_cannot_be_turned_into_an_investment(db):
+    st = statement(db, "Sparkasse")
+    paired = book(db, st, D(2026, 1, 5), -300.0, "Abir", "to N26", kind="internal_transfer")
+    paired.transfer_group = paired.id
+    paired.link_reason = "auto: same amount, only possible partner"
+    db.commit()
+    with pytest.raises(InvestmentError):
+        investments.set_booking_kind(db, paired.id, "investment")
+
+
+def test_a_plain_transfer_without_a_manual_mark_cannot_be_moved_into_the_investments(db):
+    st = statement(db, "Sparkasse")
+    plain = book(db, st, D(2026, 1, 5), -300.0, "Abir", "to N26", kind="internal_transfer")
+    with pytest.raises(InvestmentError):
+        investments.set_booking_kind(db, plain.id, "investment")
+
+
+def test_bookings_on_other_banks_are_not_changed_here(db):
+    paypal = book(db, statement(db, "PayPal"), D(2026, 1, 5), -20.0, "Someone", "x", kind="investment")
+    with pytest.raises(InvestmentError):
+        investments.set_booking_kind(db, paypal.id, "internal_transfer")
+
+
+def test_an_unknown_kind_or_booking_is_refused(db):
+    tx = sparkasse_fund_order(db)
+    with pytest.raises(InvestmentError):
+        investments.set_booking_kind(db, tx.id, "spend")
+    with pytest.raises(LookupError):
+        investments.set_booking_kind(db, 999, "internal_transfer")
+
+
+def test_the_route_reports_success_and_refusals():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+
+    from database.session import get_db
+    from routes.investments import router
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+
+    def override():
+        with factory() as session:
+            yield session
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = override
+    client = TestClient(app)
+    with factory() as session:
+        tx_id = sparkasse_fund_order(session).id
+    ok = client.patch(f"/investments/bookings/{tx_id}", json={"kind": "internal_transfer"})
+    assert ok.status_code == 200 and ok.json() == {"id": tx_id, "kind": "internal_transfer"}
+    assert client.patch(f"/investments/bookings/{tx_id}", json={"kind": "spend"}).status_code == 400
+    assert client.patch("/investments/bookings/999", json={"kind": "internal_transfer"}).status_code == 404
