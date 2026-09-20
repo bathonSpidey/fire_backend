@@ -189,27 +189,27 @@ class DBSubscriptionRule(Base):
     hidden = Column(Boolean, nullable=False, default=False)
 
 
-class DBInvestmentRule(Base):
-    """'Buys of this size at this broker, in this period, are this instrument' (a savings plan, or a rebalance).
+class DBInvestmentPlan(Base):
+    """A savings plan at a broker: this amount of that instrument, this often, from this day until that day.
 
-    Several matching rules share a buy by weight: two plans of 10 EUR each are two rules with amount 10.
-    Not used yet: filled in by the step that lets the household say what its N26 buys were.
+    History is never rewritten: suspending, resuming or changing a plan closes the old row and opens a new one.
     """
 
-    __tablename__ = "investment_rules"
+    __tablename__ = "investment_plans"
 
     id = Column(Integer, primary_key=True)
     broker = Column(String, nullable=False, index=True)  # the bank the buys are booked on
-    instrument = Column(String, nullable=False)
-    amount = Column(Float, nullable=True)  # only buys of exactly this amount; empty = any amount
-    weight = Column(Float, nullable=False, default=1.0)
-    valid_from = Column(Date, nullable=True)
-    valid_to = Column(Date, nullable=True)  # empty = still running
+    instrument = Column(String, nullable=False)  # as the household calls it
+    amount = Column(Float, nullable=False)  # euros per execution
+    frequency = Column(String, nullable=False)  # weekly | biweekly | monthly
+    anchor_date = Column(Date, nullable=True)  # any one known execution day: the others follow from it
+    start_date = Column(Date, nullable=True)  # empty = from before anything was recorded
+    end_date = Column(Date, nullable=True)  # last day it was active; empty = still running
     note = Column(String, nullable=True)
 
 
 class DBInvestmentSplit(Base):
-    """A manual decision for ONE booking: what it bought. Wins over rules. Not used yet (see above).
+    """A manual decision for ONE booking: what it bought (a sell, a correction). Wins over the plans. Not used yet.
 
     Keyed by a fingerprint of the booking (not its id) so it survives reading a statement again.
     """
