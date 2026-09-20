@@ -9,18 +9,18 @@ every savings-plan booking. N26 only says "payment hold for buy", so those stay 
 household says what they were (a later step).
 """
 
+import calendar
 import datetime
 import re
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from database.models import DBBankStatement, DBBankTransaction
+from database.models import DBBankStatement, DBBankTransaction, DBInvestmentPlan, DBInvestmentSplit
+from services.investment_brokers import ALWAYS_LISTED, BROKERS, MANUAL, UNKNOWN
+from services.investment_match import booking_ref, resolve
 from services.statement_store import MONTH_ABBR, sync_statement_json
 
-BROKERS = ("N26", "Commerzbank", "Sparkasse")  # banks that can hold investment bookings
-ALWAYS_LISTED = ("N26", "Commerzbank")  # tabs that exist even before their first booking
-UNKNOWN = "Unknown"
 RECEIVED_KINDS = ("income", "refund")  # dividends and tax refunds paid into the depot account
 COST_KINDS = ("fee", "spend")  # account fees and taxes on the depot
 
@@ -76,7 +76,7 @@ def _statement_months(db: Session) -> dict[tuple[int, int], set[str]]:
     return covered
 
 
-def _bookings(db: Session, broker: str | None) -> list[dict]:
+def _raw_bookings(db: Session, broker: str | None) -> list[dict]:
     query = (
         db.query(DBBankTransaction, DBBankStatement.bank)
         .join(DBBankStatement, DBBankStatement.id == DBBankTransaction.statement_id)
@@ -87,13 +87,34 @@ def _bookings(db: Session, broker: str | None) -> list[dict]:
     rows = []
     for tx, bank in query.order_by(DBBankTransaction.booking_date, DBBankTransaction.id):
         code = instrument_code(tx.description)
+        amount = round(-tx.amount, 2)  # money INTO the market is positive, a sell is negative
         rows.append({
-            "id": tx.id, "broker": bank, "date": tx.booking_date,
-            "amount": round(-tx.amount, 2),  # money INTO the market is positive, a sell is negative
-            "counterparty": tx.counterparty, "description": tx.description,
-            "instrument": tx.counterparty if code else UNKNOWN, "code": code,
+            "id": tx.id, "broker": bank, "date": tx.booking_date, "amount": amount,
+            "counterparty": tx.counterparty, "description": tx.description, "code": code,
+            "ref": booking_ref(bank, tx.booking_date, amount, tx.description),
         })
     return rows
+
+
+def _covered_until(db: Session) -> dict[str, datetime.date]:
+    """Per broker, the last day its uploaded statements reach (the end of its latest month with one)."""
+    latest: dict[str, tuple[int, int]] = {}
+    for (year, month), banks in _statement_months(db).items():
+        for bank in banks:
+            latest[bank] = max(latest.get(bank, (0, 0)), (year, month))
+    return {b: datetime.date(y, m, calendar.monthrange(y, m)[1]) for b, (y, m) in latest.items()}
+
+
+def _bookings(db: Session, broker: str | None, today: datetime.date) -> tuple[list[dict], dict[str, dict]]:
+    """The bookings with what each one bought (instrument, how we know), and the plan check per broker."""
+    rows = _raw_bookings(db, broker)
+    plans = db.query(DBInvestmentPlan).filter(*([DBInvestmentPlan.broker == broker] if broker else [])).all()
+    assignments = {s.booking_ref: s.instrument for s in db.query(DBInvestmentSplit)}
+    resolved, checks = resolve(rows, plans, assignments, _covered_until(db), today)
+    for row in rows:
+        r = resolved[row["id"]]
+        row.update(instrument=r.instrument, source=r.source, candidates=r.candidates, plan_id=r.plan_id)
+    return rows, checks
 
 
 def _around_the_depot(db: Session, broker: str | None) -> tuple[list[dict], list[dict]]:
@@ -134,6 +155,42 @@ def _year_rows(months: list[dict]) -> list[dict]:
             "avg_per_month": round(y["net"] / covered, 2) if covered else 0.0,
         })
     return rows
+
+
+def _known_instruments(db: Session) -> list[str]:
+    """Names to offer when typing what a booking was: those of the plans and of earlier typing."""
+    names = {name for (name,) in db.query(DBInvestmentPlan.instrument)}
+    names |= {s.instrument for s in db.query(DBInvestmentSplit)}
+    return sorted(names, key=str.lower)
+
+
+def _investment_booking(db: Session, tx_id: int) -> tuple[DBBankTransaction, str]:
+    tx = db.get(DBBankTransaction, tx_id)
+    if tx is None:
+        raise LookupError(f"No booking #{tx_id}.")
+    bank = tx.statement.bank
+    if bank not in BROKERS or tx.kind != "investment":
+        raise InvestmentError("Only investment bookings on N26, Commerzbank or Sparkasse can be labelled here.")
+    return tx, booking_ref(bank, tx.booking_date, round(-tx.amount, 2), tx.description)
+
+
+def assign_instrument(db: Session, tx_id: int, instrument: str) -> str:
+    """The household says what one booking was (a manual buy, a sell). It wins over every plan."""
+    name = " ".join((instrument or "").split())
+    if not name:
+        raise InvestmentError("Type what it was, for example the ticker.")
+    tx, ref = _investment_booking(db, tx_id)
+    db.query(DBInvestmentSplit).filter(DBInvestmentSplit.booking_ref == ref).delete()
+    db.add(DBInvestmentSplit(booking_ref=ref, instrument=name, amount=round(-tx.amount, 2)))
+    db.commit()
+    return name
+
+
+def clear_instrument(db: Session, tx_id: int) -> None:
+    """Forget what was typed: the plans decide again."""
+    _, ref = _investment_booking(db, tx_id)
+    db.query(DBInvestmentSplit).filter(DBInvestmentSplit.booking_ref == ref).delete()
+    db.commit()
 
 
 def _moved_out(db: Session, broker: str | None) -> list[dict]:
@@ -189,10 +246,10 @@ def summary(db: Session, broker: str | None = None, today: datetime.date | None 
     if broker is not None and broker not in BROKERS:
         raise InvestmentError(f"Unknown broker '{broker}'. Choose one of {', '.join(BROKERS)}.")
     today = today or datetime.date.today()
-    bookings = _bookings(db, broker)
+    bookings, checks = _bookings(db, broker, today)
     costs, received = _around_the_depot(db, broker)
 
-    listed = sorted({b["broker"] for b in _bookings(db, None)} | set(ALWAYS_LISTED), key=BROKERS.index)
+    listed = sorted({b["broker"] for b in _raw_bookings(db, None)} | set(ALWAYS_LISTED), key=BROKERS.index)
     per_broker = []
     for name in listed:
         mine = [b for b in bookings if b["broker"] == name] if broker is None else (bookings if name == broker else [])
@@ -236,24 +293,27 @@ def summary(db: Session, broker: str | None = None, today: datetime.date | None 
     instruments = []
     grouped: dict[str, list[dict]] = defaultdict(list)
     for b in bookings:
-        grouped[b["code"] or UNKNOWN].append(b)
+        # A fund the booking names (WKN) is one thing even if its name is written differently; the rest by name.
+        grouped[b["code"] or f"name:{b['instrument']}"].append(b)
     total_net = sum(b["amount"] for b in bookings)
-    for code, rows in grouped.items():
+    for key, rows in grouped.items():
         net = round(sum(r["amount"] for r in rows), 2)
         buys = [r for r in rows if r["amount"] > 0]
         active_months = {_month_start(r["date"]) for r in rows}
+        name = max({r["instrument"] for r in rows}, key=lambda n: sum(r["instrument"] == n for r in rows))
         instruments.append({
-            "code": None if code == UNKNOWN else code,
-            "name": UNKNOWN if code == UNKNOWN else max({r["instrument"] for r in rows}, key=lambda n: sum(r["instrument"] == n for r in rows)),
+            "code": rows[0]["code"], "name": name,
             "net": net, "share_pct": round(net / total_net * 100, 1) if total_net else 0.0,
             "buys": len(buys), "first": rows[0]["date"].isoformat(), "last": rows[-1]["date"].isoformat(),
             "per_month": round(net / len(active_months), 2),
             "brokers": sorted({r["broker"] for r in rows}, key=BROKERS.index),
         })
-    instruments.sort(key=lambda i: (i["name"] == UNKNOWN, -i["net"]))
+    # Named things by size, then the buys no plan explains, and last what nobody knows.
+    instruments.sort(key=lambda i: ({MANUAL: 1, UNKNOWN: 2}.get(i["name"], 0), -i["net"]))
 
     recent = [m for m in months if _shift(today, -12) < (m["year"], m["month"]) <= _month_start(today) and m["covered"]]
     unknown = [b for b in bookings if b["instrument"] == UNKNOWN]
+    manual = [b for b in bookings if b["instrument"] == MANUAL]
     years = _year_rows(months)
     average = round(sum(m["net"] for m in recent) / len(recent), 2) if recent else 0.0
     if broker is None:
@@ -285,11 +345,14 @@ def summary(db: Session, broker: str | None = None, today: datetime.date | None 
         "months": months,
         "instruments": instruments,
         "unknown": {"net": round(sum(b["amount"] for b in unknown), 2), "count": len(unknown)},
+        "manual": {"net": round(sum(b["amount"] for b in manual), 2), "count": len(manual)},
+        "plan_check": checks,  # per broker with plans: what the plans expected against what was booked
+        "known_instruments": _known_instruments(db),
         "moved_out": _moved_out(db, broker),
         "costs": {"total": round(sum(c["amount"] for c in costs), 2), "items": costs},
         "received": {"total": round(sum(r["amount"] for r in received), 2), "items": received},
         "bookings": [
-            {**b, "date": b["date"].isoformat()} for b in reversed(bookings)
+            {**{k: v for k, v in b.items() if k != "ref"}, "date": b["date"].isoformat()} for b in reversed(bookings)
         ] if broker else [],
     }
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from database.models import DBInvestmentPlan
-from services.investments import BROKERS
+from services.investment_brokers import BROKERS
 
 FREQUENCIES = ("weekly", "biweekly", "monthly")
 STEP_DAYS = {"weekly": 7, "biweekly": 14}

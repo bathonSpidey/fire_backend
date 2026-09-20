@@ -37,6 +37,32 @@ def change_booking(tx_id: int, body: KindIn, db: Session = Depends(get_db)) -> d
     return {"id": tx.id, "kind": tx.kind}
 
 
+class InstrumentBody(BaseModel):
+    instrument: str  # what it was, typically the ticker
+
+
+@router.put("/bookings/{tx_id}/instrument")
+def label_booking(tx_id: int, body: InstrumentBody, db: Session = Depends(get_db)) -> dict:
+    """Say what one booking was (a manual buy on a dip, a sell). It wins over every plan."""
+    try:
+        return {"id": tx_id, "instrument": investments.assign_instrument(db, tx_id, body.instrument)}
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except investments.InvestmentError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.delete("/bookings/{tx_id}/instrument", status_code=status.HTTP_204_NO_CONTENT)
+def unlabel_booking(tx_id: int, db: Session = Depends(get_db)) -> None:
+    """Forget what was typed: the plans decide again."""
+    try:
+        investments.clear_instrument(db, tx_id)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except investments.InvestmentError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 # ── savings plans ─────────────────────────────────────────────────────────────────────────────
 class PlanBody(BaseModel):
     broker: str
