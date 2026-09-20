@@ -34,15 +34,6 @@ class ItemStatus(StrEnum):
     DISCARDED = "Discarded"  # Throw out for non-decay reasons (packaging damage, etc.)
 
 
-class ItemStatusUpdatePayload(BaseModel):
-    item_name: str = Field(..., description="The name of the target product (case-insensitive)")
-    purchase_date: date = Field(..., description="The calendar day the receipt was issued")
-    status: ItemStatus = Field(
-        ...,
-        description="The target lifecycle update state: Available, Consumed, Spoiled, Discarded",
-    )
-
-
 class ReceiptLine(BaseModel):
     """One purchased product line, as submitted through the save_receipt tool."""
 
@@ -67,6 +58,11 @@ class ReceiptLine(BaseModel):
     storage_condition: StorageCondition
     estimated_shelf_life_days: int | None = Field(
         default=None, ge=0, description="Days it lasts after purchase; null for non-perishables"
+    )
+    days_once_opened: int | None = Field(
+        default=None, ge=0,
+        description="Days it stays good AFTER opening (milk 3, yoghurt 4, sauces 14, jam 30, open "
+        "cheese 7). Null for things that do not change once opened and for non-food.",
     )
     brand: str | None = None
 

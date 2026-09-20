@@ -187,3 +187,13 @@ def test_a_review_note_flags_the_receipt_even_when_every_check_passes(db):
     receipt = db.get(DBReceipt, outcome.receipt_id)
     assert receipt.status == "needs_review"
     assert receipt.review_note == "date not visible, assumed the upload day"
+
+
+def test_opened_shelf_life_and_starting_quantity_are_stored_for_the_stock(db):
+    sub = kaufland_like(total=10.24)
+    sub.items[2].days_once_opened = 3  # Müllermilch x3
+    outcome = save_receipt(db, owner="Abir", source_path="x", file_hash="h", sub=sub)
+    assert outcome.ok
+    milk = db.query(DBInventoryItem).filter_by(name="Müllermilch").one()
+    assert (milk.days_once_opened, milk.quantity, milk.quantity_left) == (3, 3, 3)
+    assert db.query(DBInventoryItem).filter_by(name="Zitronen 500g").one().days_once_opened is None

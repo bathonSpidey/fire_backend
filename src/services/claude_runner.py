@@ -67,7 +67,7 @@ def run_claude(
             "--effort", settings.CLAUDE_EFFORT,
             "--system-prompt", system_prompt,
             "--tools", "Read" if allow_read else "",
-            "--allowedTools", *(["Read"] if allow_read else []), *tools,
+            *(["--allowedTools", *(["Read"] if allow_read else []), *tools] if (allow_read or tools) else []),
             "--strict-mcp-config", "--mcp-config", str(config_path),
             "--permission-mode", "dontAsk",
             "--no-session-persistence",

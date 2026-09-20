@@ -8,12 +8,18 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database.models import (
-    Base, DBBankStatement, DBBankTransaction, DBIngestJob, DBInventoryItem, DBReceipt,
+    Base,
+    DBBankStatement,
+    DBBankTransaction,
+    DBIngestJob,
+    DBInventoryItem,
+    DBReceipt,
 )
 from database.session import get_db
 from models.statement import Bank, StatementLine, StatementSubmission, TxKind
 from routes.categories import router
-from services import categories as cat, ingest_worker, recategorize
+from services import categories as cat
+from services import ingest_worker, recategorize
 from services.document_ingest import IngestResult
 from services.statement_store import save_statement
 

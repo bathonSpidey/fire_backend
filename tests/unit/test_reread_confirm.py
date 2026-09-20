@@ -10,7 +10,13 @@ from sqlalchemy.pool import StaticPool
 
 from config import settings
 from database.models import (
-    Base, DBBankStatement, DBBankTransaction, DBIngestJob, DBInventoryItem, DBReceipt, DBReviewQuestion,
+    Base,
+    DBBankStatement,
+    DBBankTransaction,
+    DBIngestJob,
+    DBInventoryItem,
+    DBReceipt,
+    DBReviewQuestion,
 )
 from database.session import get_db
 from models.statement import Bank, StatementLine, StatementSubmission, TxKind

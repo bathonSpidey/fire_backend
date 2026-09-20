@@ -2,7 +2,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 # Absolute paths to match your framework boundaries safely
@@ -141,7 +141,10 @@ class InventoryAnalysis:
             self.db.query(DBInventoryItem)
             .filter(
                 DBInventoryItem.date_purchased >= cutoff_date,
-                DBInventoryItem.status.in_(["Spoiled", "Discarded"]),
+                or_(
+                    DBInventoryItem.status.in_(["Spoiled", "Discarded"]),
+                    DBInventoryItem.wasted_quantity > 0,
+                ),
             )
             .all()
         )
@@ -150,7 +153,8 @@ class InventoryAnalysis:
         category_losses = defaultdict(float)
 
         for item in leaked_items:
-            loss_amount = item.unit_cost * item.quantity
+            # only the part that was really thrown away (older rows recorded the whole item)
+            loss_amount = item.unit_cost * (item.wasted_quantity or item.quantity)
             total_loss += loss_amount
             category_losses[item.category] += loss_amount
 

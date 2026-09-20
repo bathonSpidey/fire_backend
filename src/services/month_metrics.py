@@ -112,7 +112,7 @@ def metrics_from_sources(
         "total_invested": round(total_invested, 2),
         "fixed_vs_variable_ratio": f"{fixed_ratio}% Fixed / {variable_ratio}% Variable",
         "categories": categories,
-        "sources": sources or {"statements": [], "receipts": 0},
+        "sources": sources or {"statements": [], "receipts": 0, "receipt_total": 0.0, "bank_only_total": 0.0},
     }
 
 
@@ -151,5 +151,11 @@ def calculate_metrics(db: Session, month: str, year: int) -> dict | None:
         else []
     )
     entries = collect_entries(db, first, last, cats)
-    sources = {"statements": sorted({s.bank for s in statements}), "receipts": receipts}
+    sources = {
+        "statements": sorted({s.bank for s in statements}),
+        "receipts": receipts,
+        # how the spending adds up: what the receipts say + what was paid without a receipt
+        "receipt_total": round(sum(e.amount for e in entries if e.source == "receipt"), 2),
+        "bank_only_total": round(sum(e.amount for e in entries if e.source == "bank"), 2),
+    }
     return metrics_from_sources(rows, entries, month, year, cats, sources)

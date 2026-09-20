@@ -9,8 +9,7 @@ import datetime
 from dataclasses import dataclass
 
 from sqlalchemy import exists, or_
-from sqlalchemy.orm import aliased
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from database.models import DBBankStatement, DBBankTransaction, DBReceipt, DBReviewQuestion
 from services.statement_store import sync_statement_json

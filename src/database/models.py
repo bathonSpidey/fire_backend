@@ -74,7 +74,21 @@ class DBInventoryItem(Base):
     date_expiry = Column(Date, nullable=True)  # purchase_date + estimated_shelf_life_days
     # Spending category (key of spend_categories); `category` above is the coarse pantry grouping
     spend_category = Column(String, nullable=True, index=True)
-    status = Column(String, default="Available")  # Available, Consumed, Wasted
+    status = Column(String, default="Available")  # Available, Consumed, Spoiled, Discarded
+
+    # Stock management: what is left, where it is, how it was used, how it was liked
+    quantity_left = Column(
+        Float, default=lambda ctx: ctx.get_current_parameters().get("quantity") or 1
+    )  # starts at `quantity`; 0 once finished
+    wasted_quantity = Column(Float, nullable=False, default=0.0)  # thrown away (not "gave away")
+    wasted_on = Column(Date, nullable=True)  # latest day something of this was thrown away
+    waste_reason = Column(String, nullable=True)  # expired | spoiled | disliked | too_much | other | gave_away
+    opened_on = Column(Date, nullable=True)  # opened packages go bad sooner
+    days_once_opened = Column(Integer, nullable=True)  # how long it keeps once opened (estimate)
+    finished_on = Column(Date, nullable=True)  # day the last of it was used up or thrown away
+    location = Column(String, nullable=True)  # where it is kept in the house
+    rating = Column(Integer, nullable=True)  # 1-5, how the household liked it
+    would_rebuy = Column(Boolean, nullable=True)
     receipt = relationship("DBReceipt", back_populates="items")
 
 

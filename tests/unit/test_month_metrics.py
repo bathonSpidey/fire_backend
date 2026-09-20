@@ -150,7 +150,7 @@ def test_receipts_alone_make_a_month_meaningful_before_any_statement(db):
     assert m["gross_income"] == 0.0 and m["total_invested"] == 0.0
     assert m["categories"]["groceries"]["total"] == 64.98
     assert m["categories"]["personal_care"]["total"] == 37.46
-    assert m["sources"] == {"statements": [], "receipts": 2}
+    assert m["sources"] == {"statements": [], "receipts": 2, "receipt_total": 102.44, "bank_only_total": 0.0}
 
 
 def test_a_receipt_linked_to_its_bank_booking_is_counted_once(db):
@@ -164,7 +164,7 @@ def test_a_receipt_linked_to_its_bank_booking_is_counted_once(db):
     # gym 40 + fee 10 + cash 50 + the receipt's 100 (split by item). The 100 EUR bank booking is not added again.
     assert m["lifestyle_expenses"] == 200.0
     assert m["categories"]["groceries"]["total"] == 60.0 and m["categories"]["personal_care"]["total"] == 40.0
-    assert m["sources"] == {"statements": ["Sparkasse"], "receipts": 1}
+    assert m["sources"] == {"statements": ["Sparkasse"], "receipts": 1, "receipt_total": 100.0, "bank_only_total": 100.0}
 
 
 def test_unlinked_receipts_and_bank_only_payments_both_count(db):

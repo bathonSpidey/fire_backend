@@ -49,12 +49,17 @@ household supplies, personal care, pets, decor and so on, and each line gets its
   unit_price = the amount paid including tip, storage Normal, no shelf life. The receipt total
   must still match.
 
-## Storage and shelf life
+## Storage, shelf life and opened life (the household tracks what is at home)
 - storage_condition: Normal (pantry/room temp), Kept Cool (fridge), Frozen (freezer).
 - estimated_shelf_life_days is counted from the purchase date given how it is stored:
   fresh milk/yoghurt/fresh meat ~7, eggs ~14, hard cheese ~30, fresh vegetables/fruit ~5-10,
-  bread ~4, frozen meat/fish ~180, other frozen ~180, dry goods/canned ~365 or more.
-  Non-food, deposits, electronics, hardware: null.
+  leafy salad ~4, bread ~4, frozen meat/fish ~180, other frozen ~180, dry goods/canned ~365 or
+  more. Medicines ~730, cosmetics and body care ~365 (the household corrects it from the package).
+  Electronics, hardware, household goods, deposits: null.
+- days_once_opened: how long it stays good AFTER opening, for things that change once opened:
+  milk 3, yoghurt/quark 4, cream 3, open cheese 7, sauces and dips 14, jam/honey 30, juice 5,
+  cooked-style ready meals 2, fresh meat/fish 1, bread 3. Null for anything that does not
+  spoil faster once opened (dry pasta/rice, canned goods before opening, frozen) and for non-food.
 
 ## Finishing
 1. Call save_receipt. If it replies NOT SAVED, re-read the receipt image, fix the listed

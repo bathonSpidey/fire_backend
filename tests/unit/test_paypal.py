@@ -111,7 +111,8 @@ def test_link_mirror_marks_the_paypal_row_and_enriches_the_opaque_bank_booking(d
     db.commit()
     res = linking.link_mirror(db, detail.id, bank.id, "certain", "same PayPal transaction number")
     assert res.ok and "LINKED" in res.message
-    db.refresh(detail); db.refresh(bank)
+    db.refresh(detail)
+    db.refresh(bank)
     assert detail.mirror_of == bank.id and detail.link_status == "auto"
     assert (bank.category, bank.counterparty) == ("flights", "Deutsche Lufthansa")  # detail flows to the bank row
     entry = next(t for t in db.get(DBBankStatement, detail.statement_id).transactions

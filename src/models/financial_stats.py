@@ -16,6 +16,8 @@ class StatsSources(BaseModel):
 
     statements: list[str] = []  # banks whose statement is uploaded for the month
     receipts: int = 0  # receipts dated in the month
+    receipt_total: float = 0.0  # spending that comes from receipt items
+    bank_only_total: float = 0.0  # spending paid without a receipt (bank and PayPal)
 
 
 class MonthlyStatsResponse(BaseModel):

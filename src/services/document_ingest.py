@@ -29,7 +29,7 @@ from database.models import DBBankStatement, DBBankTransaction, DBReceipt, DBRev
 from services.categories import prompt_block
 from services.claude_runner import SRC_DIR, ClaudeRun, run_claude
 from services.file_hash import source_files, source_sha256
-from services.linking import mirrored_ids, auto_mirror_paypal, auto_pair_transfers
+from services.linking import auto_mirror_paypal, auto_pair_transfers, mirrored_ids
 from services.statement_store import MONTH_ABBR
 
 PROMPTS = SRC_DIR / "prompts"

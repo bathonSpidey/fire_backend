@@ -10,7 +10,13 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from database.models import DBBankStatement, DBBankTransaction, DBInventoryItem, DBReceipt, DBReviewQuestion
+from database.models import (
+    DBBankStatement,
+    DBBankTransaction,
+    DBInventoryItem,
+    DBReceipt,
+    DBReviewQuestion,
+)
 from models.inventory import ReceiptSubmission
 from services.categories import category_map, legacy_item_category, validate_key
 
@@ -154,6 +160,8 @@ def save_receipt(
                 discount=line.discount,
                 category=legacy_item_category(line.spend_category),
                 spend_category=line.spend_category,
+                days_once_opened=line.days_once_opened,
+                quantity_left=line.quantity,
                 storage_condition=line.storage_condition.value,
                 date_purchased=sub.purchase_date,
                 date_expiry=expiry,
@@ -171,7 +179,9 @@ def save_receipt(
 
 def delete_receipt(db: Session, receipt: DBReceipt) -> None:
     """Remove a receipt (and its items) and unlink the bank booking that was matched to it."""
-    from services.statement_store import sync_statement_json  # the store modules must not import each other at load
+    from services.statement_store import (
+        sync_statement_json,  # the store modules must not import each other at load
+    )
 
     linked = db.query(DBBankTransaction).filter(DBBankTransaction.receipt_id == receipt.id).all()
     statement_ids = {t.statement_id for t in linked}

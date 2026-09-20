@@ -268,7 +268,8 @@ def two_banks(db):
 def test_certain_transfer_pairs_both_sides(db):
     out_tx, in_tx = two_banks(db)
     assert linking.link_transfer(db, out_tx.id, in_tx.id, "certain", "same amount next day").ok
-    db.refresh(out_tx); db.refresh(in_tx)
+    db.refresh(out_tx)
+    db.refresh(in_tx)
     assert out_tx.transfer_group == in_tx.transfer_group == out_tx.id
 
 
