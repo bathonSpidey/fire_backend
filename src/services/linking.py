@@ -8,7 +8,8 @@ and turns unsure matches into yes/no questions for the household.
 import datetime
 from dataclasses import dataclass
 
-from sqlalchemy import or_
+from sqlalchemy import exists, or_
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement, DBBankTransaction, DBReceipt, DBReviewQuestion
@@ -58,6 +59,11 @@ def find_receipts(
     ]
 
 
+def mirrored_ids(db: Session) -> set[int]:
+    """Ids of bank bookings that a PayPal detail row already explains."""
+    return {i for (i,) in db.query(DBBankTransaction.mirror_of).filter(DBBankTransaction.mirror_of.isnot(None))}
+
+
 def find_transactions(
     db: Session,
     date_from: datetime.date,
@@ -65,6 +71,9 @@ def find_transactions(
     only_unlinked: bool = True,
     amount: float | None = None,
     kind: str | None = "spend",
+    bank: str | None = None,
+    exclude_bank: str | None = None,
+    unmirrored: bool = False,
 ) -> list[dict]:
     """Transactions whose booking date OR purchase date falls in the window."""
     query = (
@@ -79,6 +88,16 @@ def find_transactions(
     )
     if kind:
         query = query.filter(DBBankTransaction.kind == kind)
+    if bank:
+        query = query.filter(DBBankStatement.bank == bank)
+    if exclude_bank:
+        query = query.filter(DBBankStatement.bank != exclude_bank)
+    if unmirrored:  # neither a PayPal detail row that explains a booking, nor a booking already explained
+        other = aliased(DBBankTransaction)
+        query = query.filter(
+            DBBankTransaction.mirror_of.is_(None),
+            ~exists().where(other.mirror_of == DBBankTransaction.id),
+        )
     if only_unlinked:
         query = query.filter(DBBankTransaction.receipt_id.is_(None))
     if amount is not None:
@@ -87,10 +106,12 @@ def find_transactions(
             | DBBankTransaction.amount.between(abs(amount) - AMOUNT_TOLERANCE_EUR, abs(amount) + AMOUNT_TOLERANCE_EUR)
         )
     rows = query.order_by(DBBankTransaction.booking_date, DBBankTransaction.id).limit(MAX_ROWS).all()
+    explained = mirrored_ids(db)
     return [
         {
             "transaction_id": t.id,
             "bank": s.bank,
+            "mirrored": t.mirror_of is not None or t.id in explained,
             "booking_date": t.booking_date.isoformat(),
             "purchase_date": t.purchase_date.isoformat() if t.purchase_date else None,
             "amount": t.amount,
@@ -225,6 +246,73 @@ def link_transfer(db: Session, out_tx_id: int, in_tx_id: int, confidence: str, r
     return LinkResult(True, "QUESTION created for the transfer pair (not linked yet).")
 
 
+# ── PayPal detail row <-> the bank booking it explains ───────────────────────────────────────
+PAYPAL = "PayPal"
+MIRROR_WINDOW_DAYS = 10
+GENERIC_BANK_CATEGORIES = (None, "other_expense", "shopping_general")
+
+
+def _mirror_problem(db: Session, paypal: DBBankTransaction | None, bank: DBBankTransaction | None) -> str | None:
+    if paypal is None or bank is None:
+        return "REJECTED: one of the transactions does not exist."
+    if paypal.statement.bank != PAYPAL:
+        return f"REJECTED: #{paypal.id} is not on a PayPal statement (give the PayPal row first)."
+    if bank.statement.bank == PAYPAL:
+        return f"REJECTED: #{bank.id} is also PayPal; the second row must be the bank booking."
+    if (paypal.amount < 0) != (bank.amount < 0):
+        return "REJECTED: a PayPal payment and its bank booking must both be money out (or both in)."
+    if abs(abs(paypal.amount) - abs(bank.amount)) > AMOUNT_TOLERANCE_EUR:
+        return f"REJECTED: amounts differ ({abs(paypal.amount):.2f} vs {abs(bank.amount):.2f})."
+    if abs((paypal.booking_date - bank.booking_date).days) > MIRROR_WINDOW_DAYS:
+        return f"REJECTED: more than {MIRROR_WINDOW_DAYS} days apart."
+    if paypal.mirror_of is not None:
+        return f"REJECTED: PayPal row #{paypal.id} already explains booking #{paypal.mirror_of}."
+    if bank.id in mirrored_ids(db):
+        return f"REJECTED: bank booking #{bank.id} is already explained by another PayPal row."
+    return None
+
+
+def _apply_mirror(db: Session, paypal: DBBankTransaction, bank: DBBankTransaction, status: str, reason: str) -> None:
+    paypal.mirror_of = bank.id
+    paypal.link_status, paypal.link_reason = status, reason[:300]
+    # The PayPal row knows what the payment was for; hand that to the opaque bank booking.
+    if bank.category in GENERIC_BANK_CATEGORIES and paypal.category not in GENERIC_BANK_CATEGORIES:
+        bank.category = paypal.category
+    if bank.counterparty.lower().startswith("paypal"):
+        bank.counterparty = paypal.counterparty
+    _close_open_questions_for(db, [paypal.id, bank.id], None)
+    sync_statement_json(db, paypal.statement)
+    if bank.statement_id != paypal.statement_id:
+        sync_statement_json(db, bank.statement)
+
+
+def link_mirror(db: Session, paypal_tx_id: int, bank_tx_id: int, confidence: str, reason: str) -> LinkResult:
+    paypal, bank = db.get(DBBankTransaction, paypal_tx_id), db.get(DBBankTransaction, bank_tx_id)
+    problem = _mirror_problem(db, paypal, bank)
+    if problem:
+        return LinkResult(False, problem)
+    asked = _pair_already_asked(db, "mirror_match", paypal_tx_id, bank_tx_id, None)
+    if asked and asked.status == "no":
+        return LinkResult(False, "SKIPPED: the household already answered NO for this pair.")
+
+    if confidence == "certain":
+        _apply_mirror(db, paypal, bank, "auto", reason)
+        db.commit()
+        return LinkResult(True, f"LINKED PayPal #{paypal_tx_id} explains bank booking #{bank_tx_id}.")
+
+    if asked:
+        return LinkResult(True, "Question already open for this pair.")
+    question = (
+        f"Is the {abs(paypal.amount):.2f} EUR PayPal payment to {paypal.counterparty} on {paypal.booking_date} "
+        f"the same payment as the {bank.statement.bank} booking of {abs(bank.amount):.2f} EUR on "
+        f"{bank.booking_date} ({bank.counterparty})?" + (f" Why unsure: {reason}" if reason else "")
+    )
+    db.add(DBReviewQuestion(kind="mirror_match", transaction_id=paypal_tx_id, other_transaction_id=bank_tx_id,
+                            question=question[:600]))
+    db.commit()
+    return LinkResult(True, "QUESTION created for the PayPal payment (not linked yet).")
+
+
 # ── answering ─────────────────────────────────────────────────────────────────────────────────
 def open_questions(db: Session) -> list[dict]:
     rows = db.query(DBReviewQuestion).filter(DBReviewQuestion.status == "open").order_by(DBReviewQuestion.id).all()
@@ -270,6 +358,13 @@ def answer_question(db: Session, question_id: int, yes: bool) -> LinkResult:
         receipt.bank_statement_linked = True
         _close_open_questions_for(db, [tx.id], receipt.id)
         sync_statement_json(db, tx.statement)
+    elif q.kind == "mirror_match":
+        paypal, bank = db.get(DBBankTransaction, q.transaction_id), db.get(DBBankTransaction, q.other_transaction_id)
+        problem = _mirror_problem(db, paypal, bank)
+        if problem:
+            db.commit()
+            return LinkResult(False, "Already linked in the meantime." if "already" in problem else problem)
+        _apply_mirror(db, paypal, bank, "confirmed", "confirmed by household")
     else:
         out_tx = db.get(DBBankTransaction, q.transaction_id)
         in_tx = db.get(DBBankTransaction, q.other_transaction_id)
@@ -331,4 +426,68 @@ def auto_pair_transfers(db: Session, window_days: int = PAIR_WINDOW_DAYS) -> int
             f"auto: same amount, {window_days} days or less apart, only possible partner",
         )
         linked += 1 if result.ok else 0
+    return linked
+
+
+def auto_mirror_paypal(db: Session) -> int:
+    """Match PayPal detail rows to the bank bookings they explain, without Claude.
+
+    Certain when the PayPal transaction number appears on the bank booking, or when merchant,
+    amount and date (a few days) agree and each side has exactly one possible partner. Anything
+    ambiguous is left for Claude or the household. Returns the number of links made.
+    """
+    # Payments out (spend/other/fee) and refunds in: both are described twice, by PayPal and by the
+    # bank. Money from friends and transfers to a bank are different things and are not matched here.
+    explainable = or_(
+        (DBBankTransaction.amount < 0) & DBBankTransaction.kind.in_(("spend", "other", "fee")),
+        (DBBankTransaction.amount > 0) & (DBBankTransaction.kind == "refund"),
+    )
+    paypal_rows = (
+        db.query(DBBankTransaction).join(DBBankStatement, DBBankStatement.id == DBBankTransaction.statement_id)
+        .filter(DBBankStatement.bank == PAYPAL, DBBankTransaction.mirror_of.is_(None), explainable)
+        .all()
+    )
+    explained = mirrored_ids(db)
+    bank_rows = [
+        t for t in (
+            db.query(DBBankTransaction).join(DBBankStatement, DBBankStatement.id == DBBankTransaction.statement_id)
+            .filter(DBBankStatement.bank != PAYPAL, explainable)
+        )
+        if t.id not in explained
+    ]
+
+    def days(a: DBBankTransaction, b: DBBankTransaction) -> int:
+        return abs((a.booking_date - b.booking_date).days)
+
+    def same_amount(a: DBBankTransaction, b: DBBankTransaction) -> bool:
+        return abs(abs(a.amount) - abs(b.amount)) <= AMOUNT_TOLERANCE_EUR
+
+    def reference_match(p: DBBankTransaction, b: DBBankTransaction) -> bool:
+        ref = (p.payment_reference or "").strip()
+        return bool(ref) and (ref == (b.payment_reference or "").strip() or ref in b.description)
+
+    def name_match(p: DBBankTransaction, b: DBBankTransaction) -> bool:
+        name = p.counterparty.lower()
+        return len(name) >= 3 and (name in b.counterparty.lower() or name in b.description.lower())
+
+    linked, taken = 0, set()
+    for p in paypal_rows:
+        pool = [
+            b for b in bank_rows
+            if b.id not in taken and same_amount(p, b) and (p.amount < 0) == (b.amount < 0)
+            and days(p, b) <= MIRROR_WINDOW_DAYS
+        ]
+        by_ref = [b for b in pool if reference_match(p, b)]
+        if len(by_ref) == 1:
+            chosen, why = by_ref[0], f"auto: PayPal transaction number {p.payment_reference} is on the bank booking"
+        else:
+            by_name = [b for b in pool if name_match(p, b) and days(p, b) <= 5]
+            reverse = [q for q in paypal_rows if q.mirror_of is None and same_amount(q, by_name[0]) and name_match(q, by_name[0])
+                       and days(q, by_name[0]) <= 5] if len(by_name) == 1 else []
+            if len(by_name) != 1 or len(reverse) != 1:
+                continue
+            chosen, why = by_name[0], "auto: same merchant, amount and date; only possible partner"
+        if link_mirror(db, p.id, chosen.id, "certain", why).ok:
+            taken.add(chosen.id)
+            linked += 1
     return linked

@@ -121,7 +121,7 @@ def apply_changes(db: Session, changes: list[dict]) -> tuple[int, list[str]]:
         applied += 1
     db.flush()
     for statement in db.query(DBBankStatement).filter(DBBankStatement.id.in_(statement_ids)):
-        sync_statement_json(db, statement)  # also drops cached month statistics
+        sync_statement_json(db, statement)  # the Statements page reads this copy
     db.commit()
     return applied, rejected
 

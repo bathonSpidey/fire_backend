@@ -14,11 +14,10 @@ from sqlalchemy.orm import Session
 from database.models import (
     DBBankStatement,
     DBBankTransaction,
-    DBMonthlyStat,
     DBReceipt,
     DBReviewQuestion,
 )
-from models.statement import StatementSubmission, TxKind
+from models.statement import Bank, StatementLine, StatementSubmission, TxKind
 from services.categories import category_map, validate_key
 
 BALANCE_TOLERANCE_EUR = 0.02
@@ -128,7 +127,7 @@ def find_warnings(db: Session, owner: str, sub: StatementSubmission, year: int, 
 
 
 def sync_statement_json(db: Session, statement: DBBankStatement) -> None:
-    """Rebuild the legacy JSON copy (used by the existing dashboards) from bank_transactions."""
+    """Rebuild the copy of the statement that the Statements page reads, from bank_transactions."""
     rows = (
         db.query(DBBankTransaction)
         .filter(DBBankTransaction.statement_id == statement.id)
@@ -138,20 +137,18 @@ def sync_statement_json(db: Session, statement: DBBankStatement) -> None:
     statement.transactions = [
         {
             "date": r.booking_date.strftime("%d.%m.%Y"),
+            "id": r.id,
             "description": f"{r.counterparty}: {r.description}",
             "amount": r.amount,
-            "category": None,
+            "category": r.category,
             "inventory_purchase_id": r.receipt_id,
             "counterparty": r.counterparty,
             "kind": r.kind,
             "transfer_group": r.transfer_group,
+            "mirror_of": r.mirror_of,
         }
         for r in rows
     ]
-    # Cached month statistics are derived from this data: never serve a stale copy.
-    db.query(DBMonthlyStat).filter(
-        DBMonthlyStat.month == statement.month, DBMonthlyStat.year == statement.year
-    ).delete()
 
 
 PARTIAL_NOTE = "No opening/closing balance available"
@@ -161,6 +158,73 @@ def _has_balances(statement: DBBankStatement) -> bool:
     # Missing balances are stored as 0.0, so 0.0 cannot tell "unknown" from "zero": rely on the
     # note written when the statement was saved without both balances.
     return PARTIAL_NOTE not in (statement.review_note or "")
+
+
+def _new_row(statement_id: int, line: StatementLine) -> DBBankTransaction:
+    return DBBankTransaction(
+        statement_id=statement_id,
+        booking_date=line.booking_date,
+        purchase_date=line.purchase_date,
+        amount=line.amount,
+        counterparty=line.counterparty,
+        description=line.description,
+        channel=line.channel,
+        payment_reference=line.payment_reference,
+        kind=line.kind.value,
+        category=(
+            None
+            if line.kind in NO_CATEGORY_KINDS
+            else line.category or DEFAULT_CATEGORY_FOR_KIND.get(line.kind)
+        ),
+    )
+
+
+def _merge_key(booking_date, amount: float, counterparty: str, reference: str | None) -> tuple:
+    return (booking_date, round(amount, 2), counterparty.strip().lower(), (reference or "").strip())
+
+
+def _merge_paypal(
+    db: Session, existing: DBBankStatement, sub: StatementSubmission, notes: list[str], label: str, year: int
+) -> "StatementOutcome":
+    """Add a PayPal list to the month's PayPal list instead of replacing it.
+
+    PayPal has no balances and gets uploaded in pieces (overlapping screenshots, later
+    exports), so the month grows. A payment already stored is not added again; several
+    identical payments are kept only as many times as they really occur.
+    """
+    present = Counter(
+        _merge_key(t.booking_date, t.amount, t.counterparty, t.payment_reference)
+        for t in existing.bank_transactions
+    )
+    added: list[DBBankTransaction] = []
+    for line in sub.transactions:
+        key = _merge_key(line.booking_date, line.amount, line.counterparty, line.payment_reference)
+        if present[key] > 0:
+            present[key] -= 1
+            continue
+        row = _new_row(existing.id, line)
+        db.add(row)
+        added.append(row)
+    skipped = len(sub.transactions) - len(added)
+    existing.period_start = min(existing.period_start or sub.period_start, sub.period_start)
+    existing.period_end = max(existing.period_end or sub.period_end, sub.period_end)
+    if notes:
+        existing.status = "needs_review"
+        existing.review_note = " || ".join(filter(None, [existing.review_note, *notes]))
+    db.flush()
+    sync_statement_json(db, existing)
+    db.commit()
+    listing = "\n".join(_brief(r) for r in sorted(added, key=lambda r: (r.booking_date, r.id)))
+    return StatementOutcome(
+        ok=True,
+        statement_id=existing.id,
+        month_label=f"{label} {year}",
+        warnings=notes,
+        message=(
+            f"Merged into PayPal statement #{existing.id} ({label} {year}): {len(added)} new "
+            f"transactions added, {skipped} already present.\nStored transactions:\n{listing}"
+        ),
+    )
 
 
 def _link_key(tx: DBBankTransaction) -> tuple:
@@ -203,9 +267,10 @@ def save_statement(
 
     year, month = statement_month(sub)
     label = MONTH_ABBR[month - 1]
-    warnings = find_warnings(db, owner, sub, year, month)
+    is_paypal = sub.bank == Bank.PAYPAL  # a list of payments, never has balances: that is normal
+    warnings = [] if is_paypal else find_warnings(db, owner, sub, year, month)
     has_balances = sub.opening_balance is not None and sub.closing_balance is not None
-    if not has_balances:
+    if not has_balances and not is_paypal:
         warnings.append(
             f"{PARTIAL_NOTE} (partial statement or screenshots): "
             "completeness could not be verified."
@@ -214,9 +279,26 @@ def save_statement(
     notes = []
     if problems:
         notes.append(f"{review_note} | checks failed: " + " ; ".join(problems))
+    elif review_note:
+        notes.append(review_note)  # Claude is unsure about something (e.g. which bank it is)
     notes.extend(warnings)
 
+    if is_paypal:
+        existing = (
+            db.query(DBBankStatement)
+            .filter(
+                DBBankStatement.bank == Bank.PAYPAL.value,
+                or_(DBBankStatement.owner == owner, DBBankStatement.owner.is_(None)),
+                DBBankStatement.year == year,
+                DBBankStatement.month == label,
+            )
+            .first()
+        )
+        if existing is not None:
+            return _merge_paypal(db, existing, sub, notes, label, year)
+
     # Re-import of the same bank/owner/month replaces the old copy but keeps links and answers.
+    mirror_refs: dict[tuple, list[int]] = {}  # bank booking (by key) -> PayPal rows that explain it
     kept_links: dict[tuple, tuple] = {}
     kept_ids: dict[tuple, int] = {}
     old = (
@@ -248,6 +330,9 @@ def save_statement(
     if old:
         old_linked_receipts = {t.receipt_id for t in old.bank_transactions if t.receipt_id}
         old_ids = [t.id for t in old.bank_transactions]
+        key_by_old_id = {t.id: _link_key(t) for t in old.bank_transactions}
+        for ref in db.query(DBBankTransaction).filter(DBBankTransaction.mirror_of.in_(old_ids)):
+            mirror_refs.setdefault(key_by_old_id[ref.mirror_of], []).append(ref.id)
         for t in old.bank_transactions:
             kept_ids[_link_key(t)] = t.id
             if t.receipt_id is not None or t.transfer_group is not None:
@@ -293,22 +378,7 @@ def save_statement(
 
     rows: list[DBBankTransaction] = []
     for line in sub.transactions:
-        row = DBBankTransaction(
-            statement_id=statement.id,
-            booking_date=line.booking_date,
-            purchase_date=line.purchase_date,
-            amount=line.amount,
-            counterparty=line.counterparty,
-            description=line.description,
-            channel=line.channel,
-            payment_reference=line.payment_reference,
-            kind=line.kind.value,
-            category=(
-                None
-                if line.kind in NO_CATEGORY_KINDS
-                else line.category or DEFAULT_CATEGORY_FOR_KIND.get(line.kind)
-            ),
-        )
+        row = _new_row(statement.id, line)
         link = kept_links.get(_link_key(row))
         if link:
             row.receipt_id, row.link_status, row.link_reason, row.transfer_group = link
@@ -318,6 +388,11 @@ def save_statement(
 
     # Carry answered/open questions over to the re-imported rows.
     new_id_by_key = {_link_key(r): r.id for r in rows}
+    for key, paypal_ids in mirror_refs.items():  # PayPal rows keep explaining the re-imported booking
+        for paypal_id in paypal_ids:
+            paypal_row = db.get(DBBankTransaction, paypal_id)
+            if paypal_row is not None:
+                paypal_row.mirror_of = new_id_by_key.get(key)  # None if the booking was dropped
     old_key_by_id = {v: k for k, v in kept_ids.items()}
     for kind, tx_id, rc_id, other_id, text, status, created, answered in old_question_data:
         key = old_key_by_id.get(tx_id)
@@ -356,3 +431,31 @@ def save_statement(
         ok=True, message=msg, statement_id=statement.id, month_label=f"{label} {year}",
         warnings=notes,
     )
+
+
+def delete_statement(db: Session, statement: DBBankStatement) -> None:
+    """Remove a statement and everything that pointed at it, leaving the rest consistent.
+
+    (SQLite here does not enforce foreign keys, so every reference is cleaned explicitly.)
+    """
+    ids = [t.id for t in statement.bank_transactions]
+    receipt_ids = {t.receipt_id for t in statement.bank_transactions if t.receipt_id}
+    groups = {t.transfer_group for t in statement.bank_transactions if t.transfer_group}
+    if ids:
+        db.query(DBReviewQuestion).filter(
+            or_(DBReviewQuestion.transaction_id.in_(ids), DBReviewQuestion.other_transaction_id.in_(ids))
+        ).delete(synchronize_session=False)
+        db.query(DBBankTransaction).filter(DBBankTransaction.mirror_of.in_(ids)).update(
+            {"mirror_of": None, "link_status": None, "link_reason": None}, synchronize_session=False
+        )
+    for receipt_id in receipt_ids:  # their bank booking is gone
+        receipt = db.get(DBReceipt, receipt_id)
+        if receipt:
+            receipt.bank_statement_linked = False
+    db.delete(statement)
+    db.flush()
+    if groups:  # the other side of a transfer pair stays, but is no longer paired
+        db.query(DBBankTransaction).filter(DBBankTransaction.transfer_group.in_(groups)).update(
+            {"transfer_group": None, "link_status": None, "link_reason": None}, synchronize_session=False
+        )
+    db.commit()

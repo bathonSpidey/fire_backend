@@ -29,7 +29,7 @@ from database.models import DBBankStatement, DBBankTransaction, DBReceipt, DBRev
 from services.categories import prompt_block
 from services.claude_runner import SRC_DIR, ClaudeRun, run_claude
 from services.file_hash import source_files, source_sha256
-from services.linking import auto_pair_transfers
+from services.linking import mirrored_ids, auto_mirror_paypal, auto_pair_transfers
 from services.statement_store import MONTH_ABBR
 
 PROMPTS = SRC_DIR / "prompts"
@@ -44,6 +44,7 @@ STATEMENT_TOOLS = [
     "mcp__fire__find_transactions",
     "mcp__fire__link_receipts",
     "mcp__fire__link_transfers",
+    "mcp__fire__link_payment_details",
 ]
 RECEIPT_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg"}
 STATEMENT_SUFFIXES = {".pdf", ".csv", ".png", ".jpg", ".jpeg"}  # screenshots/photos included
@@ -173,7 +174,7 @@ def move_back_to_inbox(src: pathlib.Path, owner: str) -> pathlib.Path:
 
 
 def _run_claude(
-    kind: str, owner: str, doc: pathlib.Path, result_file: pathlib.Path, db: Session
+    kind: str, owner: str, doc: pathlib.Path, result_file: pathlib.Path, db: Session, hint: str | None = None
 ) -> ClaudeRun:
     spec = KINDS[kind]
     files = source_files(doc)
@@ -181,7 +182,8 @@ def _run_claude(
         system_prompt=rules_text(kind, db),
         prompt=(
             f"Today's date is {datetime.date.today().isoformat()}.\n"
-            "Process this document. Files, in order:\n" + "\n".join(f"- {f}" for f in files)
+            + (f"The uploader says this document is from: {hint}. Use exactly that as the bank.\n" if hint else "")
+            + "Process this document. Files, in order:\n" + "\n".join(f"- {f}" for f in files)
         ),
         tools=spec["tools"],
         mcp_env={
@@ -214,8 +216,10 @@ def _link_summary_statement(db: Session, statement: DBBankStatement) -> str:
         if tx_ids
         else 0
     )
+    own_ids = {r.id for r in rows}
+    paypal = sum(1 for r in rows if r.mirror_of is not None) + len(own_ids & mirrored_ids(db))
     return (
-        f" Linked {receipts} receipt(s) and {transfers} transfer side(s); "
+        f" Linked {receipts} receipt(s), {transfers} transfer side(s) and {paypal} PayPal payment(s); "
         f"{questions} question(s) for you."
     )
 
@@ -231,7 +235,9 @@ def _known_document(db: Session, digest: str):
     return None
 
 
-def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> IngestResult:
+def ingest_document(
+    kind: str, owner: str, doc: pathlib.Path, db: Session, hint: str | None = None
+) -> IngestResult:
     """Read `doc` (file or folder of files) with Claude and file it. `kind` is normally auto."""
     check_owner(owner)
     ensure_schema_current(db)  # an out-of-date database must not cost a Claude run
@@ -255,7 +261,7 @@ def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> In
     result_file = tmp / "result.json"
     outcome = None
     try:
-        run = _run_claude(kind, owner, doc, result_file, db)
+        run = _run_claude(kind, owner, doc, result_file, db, hint)
     finally:
         if result_file.exists():
             outcome = json.loads(result_file.read_text(encoding="utf-8"))
@@ -289,7 +295,8 @@ def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> In
     else:
         month = MONTH_ABBR.index(record.month) + 1
         folder = month_folder(owner, record.year, month) / "statements"
-        auto_pair_transfers(db)  # cheap deterministic pass for pairs Claude did not link
+        auto_pair_transfers(db)  # cheap deterministic passes for pairs Claude did not link
+        auto_mirror_paypal(db)
         extra = _link_summary_statement(db, record)
 
     dest = _move(doc, folder)
@@ -298,6 +305,8 @@ def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> In
     status = "saved" if record.status == "ok" else "needs_review"
     # The tool reply for statements ends with a transaction listing meant for Claude only.
     summary = outcome["message"].split("\nStored transactions:")[0].strip()
+    if status == "needs_review" and record.review_note:
+        extra += f" Please check: {record.review_note[:300]}"
     return IngestResult(
         status, summary + extra, receipt_id=stored_id, filed_path=dest, kind=detected, **common
     )

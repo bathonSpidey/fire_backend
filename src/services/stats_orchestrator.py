@@ -1,111 +1,60 @@
+import datetime
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from database.models import DBBankStatement, DBMonthlyStat
 from services.month_metrics import calculate_metrics
 from services.period_stats_engine import PeriodStatsEngine
+from services.statement_store import MONTH_ABBR
 
-MONTH_MAP = {
-    "Jan": 1,
-    "Feb": 2,
-    "Mar": 3,
-    "Apr": 4,
-    "May": 5,
-    "Jun": 6,
-    "Jul": 7,
-    "Aug": 8,
-    "Sep": 9,
-    "Oct": 10,
-    "Nov": 11,
-    "Dec": 12,
-}
-INV_MONTH_MAP = {v: k for k, v in MONTH_MAP.items()}
+
+def _month_after(year: int, month: int) -> tuple[int, int]:
+    return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
 class StatsOrchestrator:
     @staticmethod
-    def get_clean_range_stats(start: str, end: str, db: Session) -> dict:
-        # 1. Parse date structural formats
+    def get_clean_range_stats(start: str, end: str, db: Session):
+        """Aggregate every month from `start` to `end` ('YYYY-MM'); each must have data."""
         try:
-            start_year, start_month_idx = map(int, start.split("-"))
-            end_year, end_month_idx = map(int, end.split("-"))
+            start_year, start_month = map(int, start.split("-"))
+            end_year, end_month = map(int, end.split("-"))
         except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Dates must follow YYYY-MM structural formatting."
-            )
-
-        # 2. Build explicit list of expected periods
-        target_periods = []
-        current_year, current_month = start_year, start_month_idx
-
-        start_score = (start_year * 12) + start_month_idx
-        end_score = (end_year * 12) + end_month_idx
-
-        if start_score > end_score:
+            raise HTTPException(status_code=400, detail="Dates must follow YYYY-MM structural formatting.")
+        if not (1 <= start_month <= 12 and 1 <= end_month <= 12):
+            raise HTTPException(status_code=400, detail="Months must be between 01 and 12.")
+        if (start_year, start_month) > (end_year, end_month):
             raise HTTPException(status_code=400, detail="Start range cannot be after end range.")
 
-        while current_year < end_year or (
-            current_year == end_year and current_month <= end_month_idx
-        ):
-            target_periods.append((current_year, INV_MONTH_MAP[current_month]))
-            current_month += 1
-            if current_month > 12:
-                current_month = 1
-                current_year += 1
+        records, missing = [], []
+        year, month = start_year, start_month
+        while (year, month) <= (end_year, end_month):
+            metrics = calculate_metrics(db, MONTH_ABBR[month - 1], year)
+            if metrics is None:
+                missing.append(f"{MONTH_ABBR[month - 1]} {year}")
+            else:
+                records.append(metrics)
+            year, month = _month_after(year, month)
 
-        # 3. Core Reconciliation Engine
-        final_monthly_records = []
-        missing_raw_months = []
-
-        for year, month_str in target_periods:
-            # Check cached stats first
-            stat_record = (
-                db.query(DBMonthlyStat)
-                .filter(DBMonthlyStat.year == year, DBMonthlyStat.month == month_str)
-                .first()
-            )
-
-            if stat_record:
-                final_monthly_records.append(stat_record.__dict__)
-                continue
-
-            # Cache Miss -> Lazy build from DBBankStatement raw uploads
-            raw_statements = (
-                db.query(DBBankStatement)
-                .filter(DBBankStatement.month == month_str, DBBankStatement.year == year)
-                .all()
-            )
-
-            if not raw_statements:
-                missing_raw_months.append(f"{month_str} {year}")
-                continue
-
-            metrics = calculate_metrics(db, raw_statements, month_str, year)
-
-            # Save newly calculated month back to cache table automatically
-            new_cache_entry = DBMonthlyStat(
-                month=metrics["month"],
-                year=metrics["year"],
-                gross_income=metrics["gross_income"],
-                lifestyle_expenses=metrics["lifestyle_expenses"],
-                net_savings=metrics["net_savings"],
-                savings_rate_pct=metrics["savings_rate_pct"],
-                total_invested=metrics["total_invested"],
-                fixed_vs_variable_ratio=metrics["fixed_vs_variable_ratio"],
-                categories=metrics["categories"],
-            )
-            db.add(new_cache_entry)
-            db.commit()
-
-            final_monthly_records.append(metrics)
-
-        # 4. Strict Validation check
-        if missing_raw_months:
-            readable_gaps = ", ".join(missing_raw_months)
+        if missing:
             raise HTTPException(
                 status_code=400,
-                detail=f"Transaction data missing for: [{readable_gaps}]. Please upload bank statements for these months or adjust your range.",
+                detail=(
+                    f"Nothing recorded for: [{', '.join(missing)}]. Upload receipts or bank "
+                    "statements for these months or adjust your range."
+                ),
             )
+        return PeriodStatsEngine.aggregate_months(records)
 
-        # 5. Delegate aggregation to Period Engine
-        return PeriodStatsEngine.aggregate_months(final_monthly_records)
+    @staticmethod
+    def get_recent_stats(db: Session, months: int = 3):
+        """The last `months` calendar months (this one included); months without data are skipped."""
+        today = datetime.date.today()
+        index = today.year * 12 + today.month - 1
+        records = []
+        for offset in range(months - 1, -1, -1):
+            year, month = divmod(index - offset, 12)
+            metrics = calculate_metrics(db, MONTH_ABBR[month], year)
+            if metrics is not None:
+                records.append(metrics)
+        return PeriodStatsEngine.aggregate_months(records)

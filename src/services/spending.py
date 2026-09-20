@@ -68,6 +68,7 @@ def collect_entries(
             DBBankTransaction.kind.in_(SPEND_KINDS),
             DBBankTransaction.amount < 0,
             DBBankTransaction.receipt_id.is_(None),  # linked ones are already counted as receipts
+            DBBankTransaction.mirror_of.is_(None),  # PayPal rows explained by a bank booking: counted there
             or_(on_purchase_day, on_booking_day),
         )
     )

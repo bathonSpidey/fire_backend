@@ -51,7 +51,8 @@ def process_job(
                 file = pathlib.Path(job.inbox_path)
                 if not file.exists():
                     raise FileNotFoundError(f"Uploaded file is gone: {file}")
-                result = ingest_fn(job.kind, job.owner, file, db)
+                extra = {"hint": job.hint} if job.hint else {}
+                result = ingest_fn(job.kind, job.owner, file, db, **extra)
             job.status = result.status
             if result.kind:  # auto -> what Claude decided the document is
                 job.kind = result.kind

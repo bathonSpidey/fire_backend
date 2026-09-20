@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database.models import (
-    Base, DBBankStatement, DBBankTransaction, DBIngestJob, DBInventoryItem, DBMonthlyStat, DBReceipt,
+    Base, DBBankStatement, DBBankTransaction, DBIngestJob, DBInventoryItem, DBReceipt,
 )
 from database.session import get_db
 from models.statement import Bank, StatementLine, StatementSubmission, TxKind
@@ -112,17 +112,14 @@ def test_merge_refuses_mixing_income_and_expense(db):
         cat.merge_category(db, "groceries", "salary")
 
 
-def test_delete_leaves_entries_uncategorized_and_refreshes_cached_statistics(db):
+def test_delete_leaves_entries_uncategorized_everywhere(db):
     add_item(db, "Latte", "beverages")
     add_statement(db)
-    db.add(DBMonthlyStat(month="Apr", year=2026, gross_income=0.0, lifestyle_expenses=0.0, net_savings=0.0,
-                         total_invested=0.0, savings_rate_pct=0.0, fixed_vs_variable_ratio="0%", categories={}))
     db.query(DBBankTransaction).filter_by(counterparty="Fressnapf").one().category = "beverages"
     db.commit()
     cat.delete_category(db, "beverages")
     assert db.query(DBInventoryItem).one().spend_category is None
     assert db.query(DBBankTransaction).filter_by(counterparty="Fressnapf").one().category is None
-    assert db.query(DBMonthlyStat).count() == 0  # stale month numbers dropped
 
 
 def test_usage_counts_include_uncategorized(db):

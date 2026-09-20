@@ -35,23 +35,6 @@ class DBBankStatement(Base):
     )
 
 
-class DBMonthlyStat(Base):
-    __tablename__ = "monthly_stats"
-
-    id = Column(Integer, primary_key=True, index=True)
-    month = Column(String(3), nullable=False, index=True)
-    year = Column(Integer, nullable=False, index=True)
-    gross_income = Column(Float, nullable=False)
-    lifestyle_expenses = Column(Float, nullable=False)
-    net_savings = Column(Float, nullable=False)
-    total_invested = Column(Float, nullable=False)
-    savings_rate_pct = Column(Float, nullable=False)
-    fixed_vs_variable_ratio = Column(String(50), nullable=False)
-
-    # Stores the raw dictionary breakdown: dict[str, CategorySummary]
-    categories = Column(JSON, nullable=False)
-
-
 class DBReceipt(Base):
     __tablename__ = "receipts"
 
@@ -114,6 +97,7 @@ class DBIngestJob(Base):
     receipt_id = Column(Integer, nullable=True)
     filed_path = Column(String, nullable=True)
     cost_usd = Column(Float, nullable=True)
+    hint = Column(String, nullable=True)  # bank the uploader named (statements without a header)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
 
@@ -140,6 +124,9 @@ class DBBankTransaction(Base):
     link_status = Column(String, nullable=True)  # auto | confirmed
     link_reason = Column(String, nullable=True)
     transfer_group = Column(Integer, nullable=True, index=True)  # pairs both sides of a transfer
+    # PayPal detail rows only: id of the bank booking this row explains. The bank booking is the
+    # money that moved, so a mirrored row is never counted again (see services/linking.py).
+    mirror_of = Column(Integer, nullable=True, index=True)
 
     statement = relationship("DBBankStatement", back_populates="bank_transactions")
 
@@ -150,7 +137,7 @@ class DBReviewQuestion(Base):
     __tablename__ = "review_questions"
 
     id = Column(Integer, primary_key=True, index=True)
-    kind = Column(String, nullable=False)  # receipt_match | transfer_match
+    kind = Column(String, nullable=False)  # receipt_match | transfer_match | mirror_match
     transaction_id = Column(Integer, ForeignKey("bank_transactions.id", ondelete="CASCADE"))
     receipt_id = Column(Integer, ForeignKey("receipts.id", ondelete="CASCADE"), nullable=True)
     other_transaction_id = Column(

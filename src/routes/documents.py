@@ -1,14 +1,24 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+import datetime
+import pathlib
+
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from config import settings
-from database.models import DBIngestJob
+from database.models import DBBankStatement, DBIngestJob, DBReceipt
 from database.session import get_db
+from models.statement import Bank
 from services import ingest_worker
-import pathlib
-
-from services.document_ingest import AUTO, KINDS, move_back_to_inbox, save_group_to_inbox, save_to_inbox
+from services.document_ingest import (
+    AUTO,
+    KINDS,
+    move_back_to_inbox,
+    save_group_to_inbox,
+    save_to_inbox,
+)
+from services.receipt_store import confirm_receipt, delete_receipt
+from services.statement_store import delete_statement
 
 router = APIRouter(prefix="/documents", tags=["Document Ingestion"])
 
@@ -43,6 +53,14 @@ class JobOut(BaseModel):
         )
 
 
+def _check_bank(value: str | None) -> str | None:
+    """The bank the uploader named (only useful for screenshots without a header)."""
+    hint = (value or "").strip() or None
+    if hint and hint not in {b.value for b in Bank}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown bank '{hint}'.")
+    return hint
+
+
 @router.get("/owners")
 def list_owners() -> list[str]:
     return settings.FIRE_OWNERS
@@ -53,6 +71,7 @@ async def upload_documents(
     owner: str = Form(...),
     kind: str = Form(AUTO),
     group: bool = Form(False),
+    bank_hint: str = Form(""),
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
@@ -66,6 +85,7 @@ async def upload_documents(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown owner '{owner}'.")
     if kind not in KINDS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown kind '{kind}'.")
+    hint = _check_bank(bank_hint)
 
     uploads: list[tuple[str, bytes]] = []
     rejected: list[dict] = []
@@ -107,6 +127,7 @@ async def upload_documents(
                 )
             )
     for job in jobs:
+        job.hint = hint
         db.add(job)
     db.commit()
 
@@ -154,3 +175,77 @@ def retry_job(job_id: int, db: Session = Depends(get_db)):
     db.commit()
     ingest_worker.enqueue(new.id)
     return JobOut.from_row(new)
+
+
+class RereadIn(BaseModel):
+    bank_hint: str | None = None
+
+
+class ConfirmIn(BaseModel):
+    purchase_date: datetime.date | None = None  # receipts: correct the date while confirming
+
+
+def _stored_record(db: Session, job: DBIngestJob):
+    """The receipt or statement a finished job produced, or None if it is gone."""
+    if job.status not in ("saved", "needs_review") or job.kind not in ("receipt", "statement"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only stored receipts and statements can do that.")
+    table = DBReceipt if job.kind == "receipt" else DBBankStatement
+    record = db.get(table, job.receipt_id)  # for statements this holds the statement id
+    if record is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That record no longer exists.")
+    return record
+
+
+@router.post("/jobs/{job_id}/reread", status_code=status.HTTP_202_ACCEPTED)
+def reread_job(job_id: int, body: RereadIn = Body(default_factory=RereadIn), db: Session = Depends(get_db)):
+    """Claude got it wrong: remove what was stored and read the same file again.
+
+    The stored record is deleted cleanly (bank links and questions that pointed at it are
+    released), the original file goes back to the inbox, and a new job reads it fresh. For a
+    statement you can name the bank, which Claude must then use.
+    """
+    job = db.get(DBIngestJob, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such job.")
+    if "Read again as job" in (job.message or ""):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This was already read again.")
+    if "Merged into" in (job.message or ""):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This upload was merged into the month's PayPal list; reading it again would remove the "
+            "whole month. Upload the missing screenshots instead.",
+        )
+    hint = _check_bank(body.bank_hint)
+    record = _stored_record(db, job)
+    source = pathlib.Path(record.source_path or job.filed_path or "")
+    if not source.exists():
+        raise HTTPException(status.HTTP_409_CONFLICT, "The original file is no longer available; please upload it again.")
+
+    inbox_path = move_back_to_inbox(source, job.owner)  # first: a failure here must not lose data
+    (delete_receipt if job.kind == "receipt" else delete_statement)(db, record)
+    new = DBIngestJob(owner=job.owner, kind=AUTO, original_name=job.original_name,
+                      inbox_path=str(inbox_path), status="queued", hint=hint)
+    db.add(new)
+    db.flush()
+    job.message = f"{job.message or ''} [Read again as job #{new.id}]".strip()
+    db.commit()
+    ingest_worker.enqueue(new.id)
+    return JobOut.from_row(new)
+
+
+@router.post("/jobs/{job_id}/confirm")
+def confirm_job(job_id: int, body: ConfirmIn = Body(default_factory=ConfirmIn), db: Session = Depends(get_db)):
+    """The household checked a flagged document and it is fine (a receipt's date can be fixed)."""
+    job = db.get(DBIngestJob, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such job.")
+    record = _stored_record(db, job)
+    if job.kind == "receipt":
+        confirm_receipt(db, record, body.purchase_date)
+    else:
+        # The note stays: it also records that this statement had no balances to verify against.
+        record.status = "ok"
+    job.status = "saved"
+    job.message = f"{(job.message or '').split(' Please check:')[0]} [Checked]".strip()
+    db.commit()
+    return JobOut.from_row(job)

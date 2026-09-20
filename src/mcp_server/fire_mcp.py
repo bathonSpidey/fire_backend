@@ -124,15 +124,22 @@ def find_transactions(
     only_unlinked: bool = True,
     amount: float | None = None,
     kind: str | None = "spend",
+    bank: str | None = None,
+    exclude_bank: str | None = None,
+    unmirrored: bool = False,
 ) -> str:
     """List bank/PayPal transactions whose booking date OR purchase date is in the window.
 
     `amount` (euro, sign ignored) narrows to that exact amount. `kind` filters by
     spend|income|internal_transfer|investment|fee|cash|refund|other (null = all kinds).
+    `bank` keeps one bank only (e.g. "PayPal"); `exclude_bank` drops one. `unmirrored`=true hides
+    PayPal rows that already explain a bank booking and bank bookings already explained by one.
     """
     with SessionLocal() as db:
         return json.dumps(
-            linking.find_transactions(db, date_from, date_to, only_unlinked, amount, kind)
+            linking.find_transactions(
+                db, date_from, date_to, only_unlinked, amount, kind, bank, exclude_bank, unmirrored
+            )
         )
 
 
@@ -150,6 +157,31 @@ class TransferLink(BaseModel):
     incoming_transaction_id: int = Field(description="The positive side (money arriving)")
     confidence: Literal["certain", "likely"]
     reason: str
+
+
+class PaymentDetailLink(BaseModel):
+    paypal_transaction_id: int = Field(description="The row on the PayPal list (the detail)")
+    bank_transaction_id: int = Field(description="The Sparkasse/N26/Commerzbank booking it explains")
+    confidence: Literal["certain", "likely"]
+    reason: str
+
+
+@mcp.tool()
+def link_payment_details(links: list[PaymentDetailLink]) -> str:
+    """Tell the app that a PayPal payment is the same payment as a bank booking (batch).
+
+    The bank booking is the money that moved; the PayPal row only explains it (merchant,
+    category), so it is not counted a second time. Amount must be equal, both money out, within
+    ten days. A PayPal transaction number found on the bank booking is proof (`certain`).
+    """
+    results = []
+    with SessionLocal() as db:
+        for link in links:
+            res = linking.link_mirror(
+                db, link.paypal_transaction_id, link.bank_transaction_id, link.confidence, link.reason
+            )
+            results.append(res.message)
+    return "\n".join(results)
 
 
 @mcp.tool()

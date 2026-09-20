@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 
 class BankTransaction(BaseModel):
+    id: int | None = None  # bank_transactions id; lets the UI change one booking's category
     date: str
     description: str
     amount: float
@@ -11,3 +12,4 @@ class BankTransaction(BaseModel):
     counterparty: str | None = None
     kind: str | None = None
     transfer_group: int | None = None
+    mirror_of: int | None = None

@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from database.models import DBInventoryItem, DBReceipt
+from database.models import DBBankStatement, DBBankTransaction, DBInventoryItem, DBReceipt, DBReviewQuestion
 from models.inventory import ReceiptSubmission
 from services.categories import category_map, legacy_item_category, validate_key
 
@@ -167,3 +167,32 @@ def save_receipt(
         receipt_id=receipt.id,
         message=f"{verb} as receipt #{receipt.id} ({len(sub.items)} items, {sub.total_amount:.2f} EUR).",
     )
+
+
+def delete_receipt(db: Session, receipt: DBReceipt) -> None:
+    """Remove a receipt (and its items) and unlink the bank booking that was matched to it."""
+    from services.statement_store import sync_statement_json  # the store modules must not import each other at load
+
+    linked = db.query(DBBankTransaction).filter(DBBankTransaction.receipt_id == receipt.id).all()
+    statement_ids = {t.statement_id for t in linked}
+    for tx in linked:
+        tx.receipt_id, tx.link_status, tx.link_reason = None, None, None
+    db.query(DBReviewQuestion).filter(DBReviewQuestion.receipt_id == receipt.id).delete(synchronize_session=False)
+    db.delete(receipt)
+    db.flush()
+    for statement in db.query(DBBankStatement).filter(DBBankStatement.id.in_(statement_ids)):
+        sync_statement_json(db, statement)
+    db.commit()
+
+
+def confirm_receipt(db: Session, receipt: DBReceipt, purchase_date: datetime.date | None = None) -> None:
+    """The household looked at a flagged receipt: optionally fix its date, then mark it fine."""
+    if purchase_date and purchase_date != receipt.purchase_date:
+        shift = purchase_date - receipt.purchase_date
+        receipt.purchase_date = purchase_date
+        for item in receipt.items:
+            item.date_purchased = purchase_date
+            if item.date_expiry is not None:
+                item.date_expiry = item.date_expiry + shift
+    receipt.status = "ok"
+    db.commit()

@@ -153,7 +153,7 @@ def _reassign(db: Session, source: str, target: str | None) -> tuple[int, int]:
     # Imported here: the statement store imports this module for validation (avoids a cycle).
     from services.statement_store import sync_statement_json
 
-    # The derived statement copy and cached month statistics depend on categories.
+    # The Statements page reads a derived copy that carries categories.
     for statement in db.query(DBBankStatement).filter(DBBankStatement.id.in_(statement_ids)):
         sync_statement_json(db, statement)
     return items, txs
@@ -181,3 +181,48 @@ def delete_category(db: Session, key: str) -> tuple[int, int]:
     db.delete(cat)
     db.commit()
     return moved
+
+
+# ── changing one entry by hand ────────────────────────────────────────────────────────────────
+NO_CATEGORY_KINDS = ("internal_transfer", "investment")  # money moved, not spent
+INCOME_KINDS = ("income", "refund")
+
+
+def _check_choice(cats: dict[str, DBSpendCategory], key: str, flow: str) -> None:
+    """Plain-language refusal for a category picked by hand."""
+    cat = cats.get(key)
+    if cat is None:
+        raise CategoryError(f"There is no active category '{key}'.")
+    if cat.flow != flow:
+        kind = "an income" if cat.flow == "income" else "an expense"
+        raise CategoryError(f"'{cat.label}' is {kind} category, but this entry is money {'in' if flow == 'income' else 'out'}.")
+
+
+def set_transaction_category(db: Session, tx_id: int, key: str) -> DBBankTransaction:
+    """The household picked a category for one bank booking. Same rules as the extraction."""
+    tx = db.get(DBBankTransaction, tx_id)
+    if tx is None:
+        raise LookupError(f"No transaction #{tx_id}.")
+    if tx.kind in NO_CATEGORY_KINDS:
+        raise CategoryError("Transfers and investments are not spending, so they have no category.")
+    flow = "income" if tx.kind in INCOME_KINDS or tx.amount > 0 else "expense"
+    _check_choice(category_map(db), key, flow)
+    tx.category = key
+    db.flush()
+    # Imported here: the statement store imports this module for validation (avoids a cycle).
+    from services.statement_store import sync_statement_json
+
+    sync_statement_json(db, tx.statement)  # the Statements page reads this copy
+    db.commit()
+    return tx
+
+
+def set_item_category(db: Session, item_id: int, key: str) -> DBInventoryItem:
+    """The household picked a category for one receipt item."""
+    item = db.get(DBInventoryItem, item_id)
+    if item is None:
+        raise LookupError(f"No receipt item #{item_id}.")
+    _check_choice(category_map(db), key, "expense")
+    item.spend_category, item.category = key, legacy_item_category(key)
+    db.commit()
+    return item
