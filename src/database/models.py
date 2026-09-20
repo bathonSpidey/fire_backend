@@ -177,3 +177,13 @@ class DBSpendCategory(Base):
     description = Column(String, nullable=True)  # what Claude reads to decide
     sort_order = Column(Integer, nullable=False, default=100)
     active = Column(Boolean, nullable=False, default=True)
+
+
+class DBSubscriptionRule(Base):
+    """A decision about a detected recurring payment: hidden (not a subscription) or a fixed frequency."""
+
+    __tablename__ = "subscription_rules"
+
+    key = Column(String, primary_key=True)  # the payee, normalised (see services/subscriptions.py)
+    frequency = Column(String, nullable=True)  # monthly | quarterly | yearly
+    hidden = Column(Boolean, nullable=False, default=False)

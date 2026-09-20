@@ -35,6 +35,7 @@ class Entry:
     source: str  # "receipt" | "bank"
     owner: str | None
     store: str
+    date: datetime.date | None = None
 
 
 def _bounds(year: int, month: int) -> tuple[datetime.date, datetime.date]:
@@ -53,7 +54,7 @@ def collect_entries(
         for item in receipt.items:
             amount = round((item.quantity or 1) * item.unit_cost - (item.discount or 0.0), 2)
             entries.append(Entry(_resolve(item.spend_category, cats), amount, "receipt",
-                                 receipt.owner, receipt.store_name))
+                                 receipt.owner, receipt.store_name, receipt.purchase_date))
 
     on_purchase_day = and_(
         DBBankTransaction.purchase_date.isnot(None), DBBankTransaction.purchase_date.between(first, last)
@@ -74,7 +75,8 @@ def collect_entries(
     )
     for tx, owner in bank_rows:
         key = _resolve(tx.category or DEFAULT_BY_KIND.get(tx.kind), cats)
-        entries.append(Entry(key, round(-tx.amount, 2), "bank", owner, tx.counterparty))
+        entries.append(Entry(key, round(-tx.amount, 2), "bank", owner, tx.counterparty,
+                             tx.purchase_date or tx.booking_date))
     return entries
 
 
