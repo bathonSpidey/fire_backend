@@ -90,6 +90,7 @@ def _view(item: DBInventoryItem, receipt: DBReceipt, cats: dict, today: datetime
     left = item.quantity_left if item.quantity_left is not None else float(item.quantity or 1)
     return {
         "id": item.id,
+        "receipt_id": receipt.id,
         "name": item.name,
         "brand": item.brand,
         "quantity": item.quantity,
@@ -202,12 +203,15 @@ def finish_item(db: Session, item_id: int, today: datetime.date | None = None) -
     return {**_view(item, receipt, category_map(db, include_inactive=True), today), "finished": True}
 
 
-def clear_stale(db: Session, today: datetime.date | None = None) -> dict:
-    """Old stock nobody tracked (long past its date) counts as used up, not as waste."""
+def clear_stale(db: Session, today: datetime.date | None = None, receipt_id: int | None = None) -> dict:
+    """Old stock nobody tracked (long past its date) counts as used up, not as waste.
+
+    With a receipt id only that receipt's items are looked at (used when an old receipt is uploaded).
+    """
     today = today or datetime.date.today()
     cleared = 0
     for view in stock_items(db, today):
-        if not view["stale"]:
+        if not view["stale"] or (receipt_id is not None and view["receipt_id"] != receipt_id):
             continue
         item = db.get(DBInventoryItem, view["id"])
         item.quantity_left = 0.0

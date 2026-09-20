@@ -1,0 +1,23 @@
+#!/bin/sh
+# Before every commit that touches the backend: lint and run the tests, so broken code never
+# gets committed (and then restarted into the live app by the post-commit hook).
+# Skip once with:  git commit --no-verify        Force the checks with:  FIRE_HOOK_FORCE=1 sh .githooks/pre-commit
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+changed=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$FIRE_HOOK_FORCE" ] && ! echo "$changed" | grep -Eq '^(src|tests|scripts|alembic)/|^pyproject\.toml$|^uv\.lock$'; then
+  exit 0
+fi
+
+echo "[pre-commit] checking the backend (lint + tests)..."
+export UV_LINK_MODE=copy
+
+if ! uv run ruff check src tests scripts; then
+  echo "[pre-commit] Lint problems found. Commit stopped. (uv run ruff check --fix src tests scripts fixes most.)"
+  exit 1
+fi
+if ! uv run pytest tests -q -p no:warnings; then
+  echo "[pre-commit] Tests failed. Commit stopped."
+  exit 1
+fi
+echo "[pre-commit] backend OK"

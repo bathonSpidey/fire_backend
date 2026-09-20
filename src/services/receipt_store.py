@@ -19,6 +19,7 @@ from database.models import (
 )
 from models.inventory import ReceiptSubmission
 from services.categories import category_map, legacy_item_category, validate_key
+from services.stock import clear_stale
 
 # Rounding noise on receipts is at most a cent or two; more than this is a real misread.
 SUM_TOLERANCE_EUR = 0.02
@@ -168,6 +169,8 @@ def save_receipt(
             )
         )
     db.commit()
+    # A receipt from months ago (the household back-fills history): what has long gone off was eaten.
+    clear_stale(db, receipt_id=receipt.id)
 
     verb = "Saved" if status == "ok" else "Saved FOR REVIEW"
     return SaveOutcome(

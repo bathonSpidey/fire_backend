@@ -106,6 +106,16 @@ def test_upload_accepts_a_known_bank_hint_and_rejects_others(env):
     assert bad.status_code == 400 and "Unknown bank" in bad.json()["detail"]
 
 
+def test_the_chosen_bank_is_sent_back_so_the_page_never_asks_for_it_again(env):
+    client = env[0]
+    files = [("files", ("shot.png", b"png", "image/png"))]
+    chosen = client.post("/documents/upload", data={"owner": "Abir", "bank_hint": "PayPal"}, files=files).json()["jobs"][0]
+    assert chosen["hint"] == "PayPal"
+    assert client.get("/documents/jobs").json()[0]["hint"] == "PayPal"
+    unsure = client.post("/documents/upload", data={"owner": "Abir"}, files=files).json()["jobs"][0]
+    assert unsure["hint"] is None
+
+
 def test_the_worker_passes_the_hint_to_the_reader_only_when_there_is_one(env):
     client, factory, _, _ = env
     files = [("files", ("shot.png", b"png", "image/png"))]

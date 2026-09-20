@@ -27,6 +27,10 @@ class AppSettings(BaseSettings):
     FIRE_WORKSPACE_ROOT: pathlib.Path = ROOT_DIR / "workspace"
     FIRE_OWNERS: list[str] = ["Abir", "Lena"]
 
+    # 3b. Opening the app from other devices: the PIN file, and the built frontend served with the API.
+    FIRE_AUTH_FILE: pathlib.Path = ROOT_DIR / "data" / "auth.json"
+    FIRE_FRONTEND_DIST: pathlib.Path = ROOT_DIR.parent / "fire_frontend" / "dist"
+
     # 4. Claude Code (headless) used for receipt extraction, logged-in subscription
     CLAUDE_MODEL: str = "claude-sonnet-5"
     CLAUDE_EFFORT: str = "medium"

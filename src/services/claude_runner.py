@@ -18,6 +18,13 @@ from config import settings
 SRC_DIR = pathlib.Path(__file__).resolve().parent.parent
 MCP_SERVER = SRC_DIR / "mcp_server" / "fire_mcp.py"
 
+SIGNED_OUT_MESSAGE = (
+    "Claude on the laptop is signed out. On the laptop open a terminal, run `claude`, type /login and "
+    "sign in, then press Try again. Nothing was lost."
+)
+# What Claude Code says when the subscription login is missing or expired (checked without a signed-in account).
+_SIGNED_OUT_MARKERS = ("not logged in", "/login", "oauth token", "authentication_error", "invalid authentication")
+
 
 @dataclass
 class ClaudeRun:
@@ -26,6 +33,7 @@ class ClaudeRun:
     turns: int | None = None
     error_detail: str = ""
     timed_out: bool = False
+    signed_out: bool = False
 
 
 def run_claude(
@@ -89,6 +97,10 @@ def run_claude(
         payload = json.loads(proc.stdout)
         run.cost_usd, run.turns = payload.get("total_cost_usd"), payload.get("num_turns")
         run.text = str(payload.get("result", ""))
+        if payload.get("is_error") and any(m in run.text.lower() for m in _SIGNED_OUT_MARKERS):
+            run.signed_out, run.text = True, ""
+            run.error_detail = SIGNED_OUT_MESSAGE
+            return run
     except json.JSONDecodeError:
         pass
     run.error_detail = (proc.stderr or run.text)[-2000:]

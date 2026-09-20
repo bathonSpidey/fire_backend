@@ -197,3 +197,26 @@ def test_opened_shelf_life_and_starting_quantity_are_stored_for_the_stock(db):
     milk = db.query(DBInventoryItem).filter_by(name="Müllermilch").one()
     assert (milk.days_once_opened, milk.quantity, milk.quantity_left) == (3, 3, 3)
     assert db.query(DBInventoryItem).filter_by(name="Zitronen 500g").one().days_once_opened is None
+
+
+def _shop(days_ago):
+    today = datetime.date.today()
+    milk, rice, cable = line("Milk", 1.0), line("Rice", 2.0), line("USB cable", 5.0, category="electronics")
+    milk.estimated_shelf_life_days, rice.estimated_shelf_life_days = 7, 365  # the cable has no date at all
+    return ReceiptSubmission(store_name="Kaufland", purchase_date=today - datetime.timedelta(days=days_ago),
+                             total_amount=8.0, items=[milk, rice, cable])
+
+
+def test_an_old_receipt_arrives_with_its_long_gone_food_already_used_up(db):
+    assert save_receipt(db, owner="Abir", source_path="x", file_hash="old", sub=_shop(days_ago=90)).ok
+    items = {i.name: i for i in db.query(DBInventoryItem)}
+    assert (items["Milk"].status, items["Milk"].quantity_left) == ("Consumed", 0)
+    assert items["Milk"].waste_reason == "cleared"  # neither eaten-in-time nor thrown away: the score is not touched
+    # Still good months later, or not perishable at all: still at home.
+    assert (items["Rice"].status, items["Rice"].quantity_left) == ("Available", 1)
+    assert (items["USB cable"].status, items["USB cable"].quantity_left) == ("Available", 1)
+
+
+def test_a_fresh_receipt_keeps_everything_in_stock(db):
+    assert save_receipt(db, owner="Abir", source_path="x", file_hash="new", sub=_shop(days_ago=3)).ok
+    assert all(i.status == "Available" and i.quantity_left == 1 for i in db.query(DBInventoryItem))

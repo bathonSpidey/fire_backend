@@ -34,6 +34,7 @@ class JobOut(BaseModel):
     message: str | None
     receipt_id: int | None  # for statements: the statement id
     cost_usd: float | None
+    hint: str | None  # the bank the uploader named
     created_at: str
     finished_at: str | None
 
@@ -48,6 +49,7 @@ class JobOut(BaseModel):
             message=job.message,
             receipt_id=job.receipt_id,
             cost_usd=job.cost_usd,
+            hint=job.hint,
             created_at=job.created_at.isoformat() + "Z",
             finished_at=job.finished_at.isoformat() + "Z" if job.finished_at else None,
         )

@@ -20,7 +20,7 @@ from config import settings
 from database.migrate import ensure_schema_current
 from database.models import DBBankStatement, DBBankTransaction, DBInventoryItem, DBReceipt
 from services.categories import category_map, legacy_item_category, prompt_block, validate_key
-from services.claude_runner import SRC_DIR, run_claude
+from services.claude_runner import SIGNED_OUT_MESSAGE, SRC_DIR, run_claude
 from services.document_ingest import IngestResult
 from services.statement_store import sync_statement_json
 
@@ -135,6 +135,7 @@ def run(params: dict, db: Session) -> IngestResult:
 
     system_prompt = f"{RULES_FILE.read_text(encoding='utf-8')}\n\n{prompt_block(db)}"
     total_cost, applied, failed_batches, notes = 0.0, 0, 0, []
+    signed_out = False
     for start in range(0, len(entries), BATCH_SIZE):
         batch = entries[start:start + BATCH_SIZE]
         work = pathlib.Path(tempfile.mkdtemp(prefix="fire_recheck_"))
@@ -157,12 +158,15 @@ def run(params: dict, db: Session) -> IngestResult:
                 notes.extend(outcome["rejected"][:3])
             elif claude.timed_out or (claude.error_detail and not claude.text):
                 failed_batches += 1
+                signed_out = signed_out or claude.signed_out
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
     batches = -(-len(entries) // BATCH_SIZE)
     message = f"Re-checked {len(entries)} entries: {applied} moved to a different category."
-    if failed_batches:
+    if signed_out:
+        message += f" {SIGNED_OUT_MESSAGE}"
+    elif failed_batches:
         message += f" {failed_batches} of {batches} batches failed; run it again to finish."
     if notes:
         message += " Skipped: " + "; ".join(notes)

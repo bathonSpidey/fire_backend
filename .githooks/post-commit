@@ -1,0 +1,22 @@
+#!/bin/sh
+# After a commit that changed the backend: restart the live app so it runs the committed code.
+# The restart runs in the background (it waits for a document Claude is reading, then restarts).
+# Skip once with:  FIRE_NO_RESTART=1 git commit ...
+[ -n "$FIRE_NO_RESTART" ] && exit 0
+
+top=$(git rev-parse --show-toplevel)
+changed=$(git diff-tree --no-commit-id --name-only -r --root HEAD)
+if ! echo "$changed" | grep -Eq '^(src|alembic)/|^pyproject\.toml$|^uv\.lock$'; then
+  exit 0  # tests, docs or scripts only: nothing the running app uses
+fi
+
+script="$top/../restart_fire.ps1"
+if [ ! -f "$script" ]; then
+  echo "[post-commit] restart_fire.ps1 not found next to the repos, no restart."
+  exit 0
+fi
+
+mkdir -p "$top/data"
+echo "[post-commit] restarting FIRE in the background (progress: data/restart.log)"
+nohup powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$script" >> "$top/data/restart.log" 2>&1 < /dev/null &
+exit 0
