@@ -187,36 +187,3 @@ class DBSubscriptionRule(Base):
     key = Column(String, primary_key=True)  # the payee, normalised (see services/subscriptions.py)
     frequency = Column(String, nullable=True)  # monthly | quarterly | yearly
     hidden = Column(Boolean, nullable=False, default=False)
-
-
-class DBInvestmentRule(Base):
-    """'Buys of this size at this broker, in this period, are this instrument' (a savings plan, or a rebalance).
-
-    Several matching rules share a buy by weight: two plans of 10 EUR each are two rules with amount 10.
-    """
-
-    __tablename__ = "investment_rules"
-
-    id = Column(Integer, primary_key=True)
-    broker = Column(String, nullable=False, index=True)  # the bank the buys are booked on
-    instrument = Column(String, nullable=False)
-    amount = Column(Float, nullable=True)  # only buys of exactly this amount; empty = any amount
-    weight = Column(Float, nullable=False, default=1.0)
-    valid_from = Column(Date, nullable=True)
-    valid_to = Column(Date, nullable=True)  # empty = still running
-    note = Column(String, nullable=True)
-
-
-class DBInvestmentSplit(Base):
-    """A manual decision for ONE booking: what it bought. Wins over rules.
-
-    Keyed by a fingerprint of the booking (not its id) so it survives reading a statement again.
-    """
-
-    __tablename__ = "investment_splits"
-
-    id = Column(Integer, primary_key=True)
-    booking_ref = Column(String, nullable=False, index=True)
-    instrument = Column(String, nullable=False)
-    amount = Column(Float, nullable=False)  # invested euros (positive)
-

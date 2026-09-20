@@ -14,6 +14,7 @@ from routes.documents import router as documents_router
 from routes.entries import router as entries_router
 from routes.inventory_analysis import router as inventory_analysis_router
 from routes.inventory_management import router as inventory_management_router
+from routes.investments import router as investments_router
 from routes.reviews import router as reviews_router
 from routes.spending import router as spending_router
 from routes.stats import router as stats_router
@@ -50,7 +51,7 @@ protected = APIRouter(dependencies=[Depends(require_login)])
 for router in (
     bank_statement_management_router, stats_router, inventory_management_router, inventory_analysis_router,
     documents_router, reviews_router, categories_router, entries_router, stock_router, spending_router,
-    claude_router,
+    investments_router, claude_router,
 ):
     protected.include_router(router)
 api.include_router(protected)
