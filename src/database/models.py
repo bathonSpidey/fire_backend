@@ -16,10 +16,23 @@ class DBBankStatement(Base):
     starting_balance = Column(Float, nullable=False)
     closing_balance = Column(Float, nullable=False)
 
-    # Store the list of BankTransaction objects as a JSON array natively
+    # DERIVED copy of bank_transactions in the legacy shape, kept in sync by
+    # services.statement_store.sync_statement_json so the existing dashboards keep working.
     transactions = Column(JSON, nullable=False)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # Provenance and review state (set by the Claude ingestion pipeline)
+    owner = Column(String, nullable=True, index=True)
+    source_path = Column(String, nullable=True)
+    file_hash = Column(String, nullable=True, unique=True)
+    period_start = Column(Date, nullable=True)
+    period_end = Column(Date, nullable=True)
+    status = Column(String, default="ok", nullable=False)  # ok | needs_review
+    review_note = Column(String, nullable=True)
+    bank_transactions = relationship(
+        "DBBankTransaction", back_populates="statement", cascade="all, delete-orphan"
+    )
 
 
 class DBMonthlyStat(Base):
@@ -55,6 +68,7 @@ class DBReceipt(Base):
     source_path = Column(String, nullable=True)  # where the original file is filed
     file_hash = Column(String, nullable=True, unique=True)  # sha256 of the uploaded file
     receipt_number = Column(String, nullable=True)  # "Bon" number printed on the receipt
+    payment_reference = Column(String, nullable=True)  # e.g. Bluecode transaction number
     payment_method = Column(String, nullable=True)  # e.g. "Kaufland Pay", "Card", "Cash"
     status = Column(String, default="ok", nullable=False)  # ok | needs_review
     review_note = Column(String, nullable=True)  # why extraction wasn't clean
@@ -92,6 +106,7 @@ class DBIngestJob(Base):
     original_name = Column(String, nullable=False)
     inbox_path = Column(String, nullable=False)
     # queued | processing | saved | needs_review | duplicate | failed
+    kind = Column(String, nullable=False, default="receipt")  # receipt | statement
     status = Column(String, nullable=False, default="queued", index=True)
     message = Column(String, nullable=True)
     receipt_id = Column(Integer, nullable=True)
@@ -99,3 +114,47 @@ class DBIngestJob(Base):
     cost_usd = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
+
+
+class DBBankTransaction(Base):
+    """One booking on a bank/PayPal statement. Source of truth for linking."""
+
+    __tablename__ = "bank_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    statement_id = Column(Integer, ForeignKey("statements.id", ondelete="CASCADE"), nullable=False)
+    booking_date = Column(Date, nullable=False, index=True)
+    purchase_date = Column(Date, nullable=True)  # real purchase day if the text reveals it
+    amount = Column(Float, nullable=False)  # negative = money out
+    counterparty = Column(String, nullable=False)  # clean name, e.g. "Kaufland"
+    description = Column(String, nullable=False)  # raw text, whitespace-normalised
+    channel = Column(String, nullable=True)  # SEPA | Card | Bluecode | PayPal | ...
+    payment_reference = Column(String, nullable=True)  # ids usable to match other documents
+    # spend | income | internal_transfer | investment | fee | cash | refund | other
+    kind = Column(String, nullable=False, default="spend")
+    category = Column(String, nullable=True)
+
+    receipt_id = Column(Integer, ForeignKey("receipts.id", ondelete="SET NULL"), nullable=True)
+    link_status = Column(String, nullable=True)  # auto | confirmed
+    link_reason = Column(String, nullable=True)
+    transfer_group = Column(Integer, nullable=True, index=True)  # pairs both sides of a transfer
+
+    statement = relationship("DBBankStatement", back_populates="bank_transactions")
+
+
+class DBReviewQuestion(Base):
+    """A yes/no question for the household when Claude is not sure about a link."""
+
+    __tablename__ = "review_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False)  # receipt_match | transfer_match
+    transaction_id = Column(Integer, ForeignKey("bank_transactions.id", ondelete="CASCADE"))
+    receipt_id = Column(Integer, ForeignKey("receipts.id", ondelete="CASCADE"), nullable=True)
+    other_transaction_id = Column(
+        Integer, ForeignKey("bank_transactions.id", ondelete="CASCADE"), nullable=True
+    )
+    question = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="open", index=True)  # open | yes | no
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    answered_at = Column(DateTime, nullable=True)

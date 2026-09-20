@@ -125,4 +125,9 @@ class ReceiptSubmission(BaseModel):
         default=None, description="As printed, e.g. 'Kaufland Pay', 'EC-Karte', 'Bar'"
     )
     receipt_number: str | None = Field(default=None, description="Bon/receipt number if printed")
+    payment_reference: str | None = Field(
+        default=None,
+        description="Payment transaction id printed on the receipt (e.g. 'Bluecode "
+        "Transaktionsnummer DZFE4JVU...'). Used to match the bank booking.",
+    )
     items: list[ReceiptLine]

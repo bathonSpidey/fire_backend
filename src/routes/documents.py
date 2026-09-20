@@ -6,20 +6,21 @@ from config import settings
 from database.models import DBIngestJob
 from database.session import get_db
 from services import ingest_worker
-from services.receipt_ingest import save_to_inbox
+from services.document_ingest import AUTO, KINDS, save_group_to_inbox, save_to_inbox
 
-router = APIRouter(prefix="/receipts", tags=["Receipt Ingestion"])
+router = APIRouter(prefix="/documents", tags=["Document Ingestion"])
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 class JobOut(BaseModel):
     id: int
+    kind: str
     owner: str
     original_name: str
     status: str
     message: str | None
-    receipt_id: int | None
+    receipt_id: int | None  # for statements: the statement id
     cost_usd: float | None
     created_at: str
     finished_at: str | None
@@ -28,6 +29,7 @@ class JobOut(BaseModel):
     def from_row(cls, job: DBIngestJob) -> "JobOut":
         return cls(
             id=job.id,
+            kind=job.kind,
             owner=job.owner,
             original_name=job.original_name,
             status=job.status,
@@ -45,38 +47,65 @@ def list_owners() -> list[str]:
 
 
 @router.post("/upload", status_code=status.HTTP_202_ACCEPTED)
-async def upload_receipts(
+async def upload_documents(
     owner: str = Form(...),
+    kind: str = Form(AUTO),
+    group: bool = Form(False),
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ):
-    """Accept receipt files and queue them; extraction runs in the background.
+    """Accept receipts and/or statements and queue them; extraction runs in the background.
 
-    Returns immediately. Poll GET /receipts/jobs to follow progress.
+    Claude decides per document whether it is a receipt or a statement (kind=auto). With
+    group=true all files form ONE document (e.g. screenshots of one statement, in the order
+    given). Returns immediately. Poll GET /documents/jobs to follow progress.
     """
     if owner not in settings.FIRE_OWNERS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown owner '{owner}'.")
+    if kind not in KINDS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown kind '{kind}'.")
 
-    jobs: list[DBIngestJob] = []
+    uploads: list[tuple[str, bytes]] = []
     rejected: list[dict] = []
     for upload in files:
         data = await upload.read()
         if len(data) > MAX_UPLOAD_BYTES:
             rejected.append({"filename": upload.filename, "reason": "File larger than 20 MB."})
-            continue
+        else:
+            uploads.append((upload.filename or "upload", data))
+
+    jobs: list[DBIngestJob] = []
+    if group and len(uploads) > 1:
         try:
-            inbox_file = save_to_inbox(owner, upload.filename or "upload", data)
-        except ValueError as exc:
-            rejected.append({"filename": upload.filename, "reason": str(exc)})
-            continue
-        job = DBIngestJob(
-            owner=owner,
-            original_name=upload.filename or inbox_file.name,
-            inbox_path=str(inbox_file),
-            status="queued",
-        )
+            folder = save_group_to_inbox(owner, uploads, kind)
+        except ValueError as exc:  # one bad file rejects the whole group: it is one document
+            rejected.append({"filename": ", ".join(name for name, _ in uploads), "reason": str(exc)})
+        else:
+            names = ", ".join(name for name, _ in uploads)
+            jobs.append(
+                DBIngestJob(
+                    owner=owner,
+                    kind=kind,
+                    original_name=f"{len(uploads)} files: {names}"[:200],
+                    inbox_path=str(folder),
+                    status="queued",
+                )
+            )
+    else:
+        for name, data in uploads:
+            try:
+                inbox_file = save_to_inbox(owner, name, data, kind)
+            except ValueError as exc:
+                rejected.append({"filename": name, "reason": str(exc)})
+                continue
+            jobs.append(
+                DBIngestJob(
+                    owner=owner, kind=kind, original_name=name,
+                    inbox_path=str(inbox_file), status="queued",
+                )
+            )
+    for job in jobs:
         db.add(job)
-        jobs.append(job)
     db.commit()
 
     for job in jobs:

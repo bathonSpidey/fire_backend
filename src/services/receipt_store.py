@@ -120,6 +120,7 @@ def save_receipt(
         source_path=source_path,
         file_hash=file_hash,
         receipt_number=sub.receipt_number,
+        payment_reference=sub.payment_reference,
         payment_method=sub.payment_method,
         status=status,
         review_note=note,

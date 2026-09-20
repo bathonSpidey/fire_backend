@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import DBIngestJob
 from database.session import SessionLocal
-from services.receipt_ingest import IngestResult, ingest_receipt
+from services.document_ingest import IngestResult, ingest_document
 
 logger = logging.getLogger("fire.ingest_worker")
 
@@ -31,7 +31,7 @@ def enqueue(job_id: int) -> None:
 def process_job(
     job_id: int,
     session_factory: sessionmaker[Session] = SessionLocal,
-    ingest_fn: Callable[[str, pathlib.Path, Session], IngestResult] = ingest_receipt,
+    ingest_fn: Callable[[str, str, pathlib.Path, Session], IngestResult] = ingest_document,
 ) -> None:
     """Run one job to completion and record the outcome on its row. Never raises."""
     with session_factory() as db:
@@ -45,8 +45,10 @@ def process_job(
             file = pathlib.Path(job.inbox_path)
             if not file.exists():
                 raise FileNotFoundError(f"Uploaded file is gone: {file}")
-            result = ingest_fn(job.owner, file, db)
+            result = ingest_fn(job.kind, job.owner, file, db)
             job.status = result.status
+            if result.kind:  # auto -> what Claude decided the document is
+                job.kind = result.kind
             job.message = result.message
             job.receipt_id = result.receipt_id
             job.filed_path = str(result.filed_path) if result.filed_path else None

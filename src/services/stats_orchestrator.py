@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from database.models import DBBankStatement, DBMonthlyStat
 from models.bank_statement import BankStatement
 from models.bank_transaction import BankTransaction
-from services.monthly_stats_engine import MonthlyStatsEngine
+from services.month_metrics import calculate_metrics
 from services.period_stats_engine import PeriodStatsEngine
 
 MONTH_MAP = {
@@ -82,39 +82,7 @@ class StatsOrchestrator:
                 missing_raw_months.append(f"{month_str} {year}")
                 continue
 
-            # 1. FIX: Explicitly hydrate raw database records into clean Pydantic domain models
-            hydrated_statements = []
-            for db_stmt in raw_statements:
-                # Handle child transactions safely whether they live as a SQLAlchemy
-                # relationship model or an internal serialized JSON array block
-                parsed_transactions = []
-                for tx in db_stmt.transactions:
-                    if isinstance(tx, dict):
-                        parsed_transactions.append(BankTransaction(**tx))
-                    else:
-                        # If it's an ORM class model instance, convert it using attributes or model_validate
-                        parsed_transactions.append(
-                            BankTransaction(
-                                date=getattr(tx, "date"),
-                                description=getattr(tx, "description"),
-                                amount=getattr(tx, "amount"),
-                            )
-                        )
-
-                hydrated_statements.append(
-                    BankStatement(
-                        bank=db_stmt.bank,
-                        month=db_stmt.month,
-                        year=db_stmt.year,
-                        starting_balance=db_stmt.starting_balance,
-                        closing_balance=db_stmt.closing_balance,
-                        transactions=parsed_transactions,
-                    )
-                )
-
-            # 2. Run your calculation engine using explicitly typed domain objects
-            engine = MonthlyStatsEngine(statements=hydrated_statements)
-            metrics = engine.calculate_month(month=month_str, year=year)
+            metrics = calculate_metrics(db, raw_statements, month_str, year)
 
             # Save newly calculated month back to cache table automatically
             new_cache_entry = DBMonthlyStat(

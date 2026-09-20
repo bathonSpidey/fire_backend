@@ -1,6 +1,5 @@
 import pathlib
 
-from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve the root directory path dynamically
@@ -32,12 +31,9 @@ class AppSettings(BaseSettings):
     CLAUDE_MODEL: str = "claude-sonnet-5"
     CLAUDE_EFFORT: str = "medium"
     CLAUDE_TIMEOUT_SECONDS: int = 240
+    CLAUDE_STATEMENT_TIMEOUT_SECONDS: int = 900  # statements are long and get linked afterwards
 
-    # 5. Third-Party Sensitive API Keys (legacy Gemini path, optional now)
-    # Using SecretStr prevents the key from leaking into raw print logs or error traces
-    GEMINI_API_KEY: SecretStr = SecretStr("")
-
-    # 6. Bind Pydantic directly to your physical .env file configuration
+    # 5. Bind Pydantic directly to your physical .env file configuration
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
         env_file_encoding="utf-8",

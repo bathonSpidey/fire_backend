@@ -3,20 +3,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database.migrate import upgrade_to_head
-from routes.bank_statement import router as bank_statement_router
+from database.migrate import refresh_derived_data, upgrade_to_head
 from routes.bank_statement_management import router as bank_statement_management_router
 from routes.inventory import router as inventory_router
 from routes.inventory_analysis import router as inventory_analysis_router
 from routes.inventory_management import router as inventory_management_router
 from routes.inventory_stats import router as inventory_stats_router
-from routes.receipt_ingest import router as receipt_ingest_router
+from routes.documents import router as documents_router
+from routes.reviews import router as reviews_router
 from routes.stats import router as stats_router
 from services import ingest_worker
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     upgrade_to_head()
+    refresh_derived_data()
     ingest_worker.start()
     yield
     ingest_worker.stop()
@@ -39,14 +40,14 @@ app.add_middleware(
 )
 
 # 2. Register Domain Feature Routers
-app.include_router(bank_statement_router)
 app.include_router(bank_statement_management_router)
 app.include_router(stats_router)
 app.include_router(inventory_router)
 app.include_router(inventory_management_router)
 app.include_router(inventory_analysis_router)
 app.include_router(inventory_stats_router)
-app.include_router(receipt_ingest_router)
+app.include_router(documents_router)
+app.include_router(reviews_router)
 
 
 @app.get("/health", tags=["System"])

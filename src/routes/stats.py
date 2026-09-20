@@ -6,7 +6,7 @@ from database.models import DBBankStatement, DBMonthlyStat
 from database.session import get_db
 from models.bank_statement import BankStatement
 from models.financial_stats import MonthlyStatsResponse
-from services.monthly_stats_engine import MonthlyStatsEngine
+from services.month_metrics import calculate_metrics
 from services.period_stats_engine import PeriodStatsEngine
 from services.stats_orchestrator import StatsOrchestrator
 
@@ -61,22 +61,8 @@ def get_or_calculate_monthly_stats(
             ),
         )
 
-    # Step 4: Re-hydrate rows into standard domain objects
-    domain_statements = [
-        BankStatement(
-            bank=r.bank,
-            month=r.month,
-            year=r.year,
-            starting_balance=r.starting_balance,
-            closing_balance=r.closing_balance,
-            transactions=r.transactions,
-        )
-        for r in db_statements
-    ]
-
-    # Step 5: Execute computation sequence through the engine
-    engine = MonthlyStatsEngine(domain_statements)
-    metrics = engine.calculate_month(month=month, year=year)
+    # Steps 4-5: compute from what Claude understood (old engine only for old statements)
+    metrics = calculate_metrics(db, db_statements, month, year)
 
     # Step 6: Persist structural summary back into your database
     db_stats = DBMonthlyStat(
@@ -136,27 +122,13 @@ def force_recalculate_monthly_stats(
             detail=f"Cannot recalculate stats. No raw statement source records found for {month} {year}.",
         )
 
-    # 2. Re-hydrate source tracking records into domain schemas
-    domain_statements = [
-        BankStatement(
-            bank=r.bank,
-            month=r.month,
-            year=r.year,
-            starting_balance=r.starting_balance,
-            closing_balance=r.closing_balance,
-            transactions=r.transactions,
-        )
-        for r in db_statements
-    ]
-
     # 3. Purge any stale pre-existing stats entry safely out of the table
     db.query(DBMonthlyStat).filter(
         DBMonthlyStat.month == month, DBMonthlyStat.year == year
     ).delete()
 
-    # 4. Compute pristine metrics via engine
-    engine = MonthlyStatsEngine(domain_statements)
-    metrics = engine.calculate_month(month=month, year=year)
+    # 4. Compute pristine metrics
+    metrics = calculate_metrics(db, db_statements, month, year)
 
     # 5. Persist the updated dataset down into the cache table
     db_stats = DBMonthlyStat(
