@@ -18,7 +18,8 @@ from database.models import (
     DBReceipt,
     DBReviewQuestion,
 )
-from models.statement import StatementSubmission
+from models.statement import StatementSubmission, TxKind
+from services.categories import category_map, validate_key
 
 BALANCE_TOLERANCE_EUR = 0.02
 MAX_PERIOD_SPREAD_DAYS = 40
@@ -45,7 +46,30 @@ def statement_month(sub: StatementSubmission) -> tuple[int, int]:
     return (sub.period_end.year, sub.period_end.month)
 
 
-def find_problems(sub: StatementSubmission) -> list[str]:
+NO_CATEGORY_KINDS = (TxKind.INTERNAL_TRANSFER, TxKind.INVESTMENT)  # money moved, not spent
+DEFAULT_CATEGORY_FOR_KIND = {TxKind.FEE: "bank_fees", TxKind.CASH: "cash"}
+INCOME_KINDS = (TxKind.INCOME, TxKind.REFUND)
+
+
+def _category_problems(sub: StatementSubmission, categories: dict) -> list[str]:
+    problems = []
+    for t in sub.transactions:
+        if t.kind in NO_CATEGORY_KINDS:
+            continue
+        who = f"{t.booking_date} {t.counterparty} {t.amount:+.2f}"
+        if t.category is None:
+            if t.kind in DEFAULT_CATEGORY_FOR_KIND or t.kind == TxKind.OTHER:
+                continue
+            problems.append(f"Entry {who} is missing a category.")
+            continue
+        flow = "income" if t.kind in INCOME_KINDS or (t.kind == TxKind.OTHER and t.amount > 0) else "expense"
+        problem = validate_key(categories, t.category, flow)
+        if problem:
+            problems.append(f"Entry {who} {problem}.")
+    return problems
+
+
+def find_problems(sub: StatementSubmission, categories: dict | None = None) -> list[str]:
     """Hard problems: the statement must not be stored while any of these hold."""
     problems: list[str] = []
     if not sub.transactions:
@@ -69,6 +93,8 @@ def find_problems(sub: StatementSubmission) -> list[str]:
                 f"(difference {total - expected:+.2f}). Re-check for a missed or duplicated "
                 "entry, a wrong sign, or a misread amount."
             )
+    if categories is not None:
+        problems.extend(_category_problems(sub, categories))
     return problems
 
 
@@ -167,7 +193,7 @@ def save_statement(
             message=f"Already stored as statement #{same_file.id}. Nothing to do.",
         )
 
-    problems = find_problems(sub)
+    problems = find_problems(sub, categories=category_map(db))
     if problems and not review_note:
         return StatementOutcome(
             ok=False,
@@ -277,7 +303,11 @@ def save_statement(
             channel=line.channel,
             payment_reference=line.payment_reference,
             kind=line.kind.value,
-            category=line.category,
+            category=(
+                None
+                if line.kind in NO_CATEGORY_KINDS
+                else line.category or DEFAULT_CATEGORY_FOR_KIND.get(line.kind)
+            ),
         )
         link = kept_links.get(_link_key(row))
         if link:

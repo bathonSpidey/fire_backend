@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from database.session import SessionLocal
 from models.inventory import ReceiptSubmission
 from models.statement import StatementSubmission
-from services import linking
+from services import linking, recategorize
 from services.file_hash import source_sha256
 from services.receipt_store import save_receipt as store_receipt
 from services.statement_store import save_statement as store_statement
@@ -189,6 +189,25 @@ def link_transfers(links: list[TransferLink]) -> str:
             )
             results.append(res.message)
     return "\n".join(results)
+
+
+class CategoryChange(BaseModel):
+    ref: str = Field(description="Entry reference exactly as listed, e.g. i123 or t45")
+    category: str = Field(description="Category key from the CATEGORIES list")
+
+
+@mcp.tool()
+def apply_recategorization(changes: list[CategoryChange]) -> str:
+    """Move entries to a different category. Send only the entries that should CHANGE.
+
+    Unknown keys, wrong income/expense type and transfers are rejected with the reason.
+    """
+    with SessionLocal() as db:
+        applied, rejected = recategorize.apply_changes(db, [c.model_dump() for c in changes])
+    pathlib.Path(os.environ["FIRE_RESULT_FILE"]).write_text(
+        json.dumps({"applied": applied, "rejected": rejected}), encoding="utf-8"
+    )
+    return f"Applied {applied}." + (f" Rejected: {'; '.join(rejected)}" if rejected else "")
 
 
 if __name__ == "__main__":

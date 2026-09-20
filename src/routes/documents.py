@@ -6,7 +6,9 @@ from config import settings
 from database.models import DBIngestJob
 from database.session import get_db
 from services import ingest_worker
-from services.document_ingest import AUTO, KINDS, save_group_to_inbox, save_to_inbox
+import pathlib
+
+from services.document_ingest import AUTO, KINDS, move_back_to_inbox, save_group_to_inbox, save_to_inbox
 
 router = APIRouter(prefix="/documents", tags=["Document Ingestion"])
 
@@ -117,3 +119,38 @@ async def upload_documents(
 def list_jobs(limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     rows = db.query(DBIngestJob).order_by(DBIngestJob.id.desc()).limit(limit).all()
     return [JobOut.from_row(j) for j in rows]
+
+
+@router.post("/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_job(job_id: int, db: Session = Depends(get_db)):
+    """Queue a failed job again without uploading anything again.
+
+    Documents are read anew with auto-detection (an old failure may have been a wrong guess or a
+    system problem). The failed row stays as history and points to the new job.
+    """
+    job = db.get(DBIngestJob, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such job.")
+    if job.status != "failed":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only failed jobs can be retried.")
+    if "Retried as job" in (job.message or ""):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This job was already retried.")
+
+    if job.kind == "recategorize":
+        new = DBIngestJob(owner=job.owner, kind="recategorize", original_name=job.original_name,
+                          inbox_path=job.inbox_path, status="queued")
+    else:
+        source = next(
+            (pathlib.Path(p) for p in (job.filed_path, job.inbox_path) if p and pathlib.Path(p).exists()),
+            None,
+        )
+        if source is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "The uploaded file is no longer available; please upload it again.")
+        new = DBIngestJob(owner=job.owner, kind=AUTO, original_name=job.original_name,
+                          inbox_path=str(move_back_to_inbox(source, job.owner)), status="queued")
+    db.add(new)
+    db.flush()
+    job.message = f"{job.message or ''} [Retried as job #{new.id}]".strip()
+    db.commit()
+    ingest_worker.enqueue(new.id)
+    return JobOut.from_row(new)

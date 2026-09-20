@@ -2,11 +2,11 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import extract, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # Absolute paths to match your framework boundaries safely
-from database.models import DBInventoryItem, DBReceipt
+from database.models import DBInventoryItem
 
 
 class InventoryAnalysis:

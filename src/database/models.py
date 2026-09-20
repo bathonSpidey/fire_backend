@@ -89,6 +89,8 @@ class DBInventoryItem(Base):
     storage_condition = Column(String, nullable=False)  # Maps from StorageCondition Enum string
     date_purchased = Column(Date, nullable=False)
     date_expiry = Column(Date, nullable=True)  # purchase_date + estimated_shelf_life_days
+    # Spending category (key of spend_categories); `category` above is the coarse pantry grouping
+    spend_category = Column(String, nullable=True, index=True)
     status = Column(String, default="Available")  # Available, Consumed, Wasted
     receipt = relationship("DBReceipt", back_populates="items")
 
@@ -158,3 +160,19 @@ class DBReviewQuestion(Base):
     status = Column(String, nullable=False, default="open", index=True)  # open | yes | no
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     answered_at = Column(DateTime, nullable=True)
+
+
+
+class DBSpendCategory(Base):
+    """The household's editable category list, shared by receipts, statements and the dashboards."""
+
+    __tablename__ = "spend_categories"
+
+    key = Column(String, primary_key=True)  # stable id, e.g. "ev_charging"
+    label = Column(String, nullable=False)
+    group_name = Column(String, nullable=False)
+    flow = Column(String, nullable=False, default="expense")  # expense | income
+    fixed = Column(Boolean, nullable=False, default=False)  # counts as a fixed cost
+    description = Column(String, nullable=True)  # what Claude reads to decide
+    sort_order = Column(Integer, nullable=False, default=100)
+    active = Column(Boolean, nullable=False, default=True)

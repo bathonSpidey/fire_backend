@@ -6,6 +6,7 @@ queued when the laptop was switched off is picked up again on the next start.
 """
 
 import datetime
+import json
 import logging
 import pathlib
 import queue
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import DBIngestJob
 from database.session import SessionLocal
+from services import recategorize
 from services.document_ingest import IngestResult, ingest_document
 
 logger = logging.getLogger("fire.ingest_worker")
@@ -32,6 +34,7 @@ def process_job(
     job_id: int,
     session_factory: sessionmaker[Session] = SessionLocal,
     ingest_fn: Callable[[str, str, pathlib.Path, Session], IngestResult] = ingest_document,
+    recheck_fn: Callable[[dict, Session], IngestResult] = recategorize.run,
 ) -> None:
     """Run one job to completion and record the outcome on its row. Never raises."""
     with session_factory() as db:
@@ -42,10 +45,13 @@ def process_job(
         db.commit()  # release SQLite's write lock before the slow Claude call
 
         try:
-            file = pathlib.Path(job.inbox_path)
-            if not file.exists():
-                raise FileNotFoundError(f"Uploaded file is gone: {file}")
-            result = ingest_fn(job.kind, job.owner, file, db)
+            if job.kind == "recategorize":  # not a file: inbox_path holds the job's parameters
+                result = recheck_fn(json.loads(job.inbox_path), db)
+            else:
+                file = pathlib.Path(job.inbox_path)
+                if not file.exists():
+                    raise FileNotFoundError(f"Uploaded file is gone: {file}")
+                result = ingest_fn(job.kind, job.owner, file, db)
             job.status = result.status
             if result.kind:  # auto -> what Claude decided the document is
                 job.kind = result.kind

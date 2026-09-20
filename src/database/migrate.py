@@ -51,6 +51,26 @@ def upgrade_to_head() -> None:
     logger.warning("Database migrated to %s", head)
 
 
+class OutdatedDatabaseError(RuntimeError):
+    """The database schema is behind the code (the backend was not restarted after an update)."""
+
+
+def ensure_schema_current(db) -> None:
+    """Fail fast, before spending any tokens, if the database is behind the code on disk.
+
+    The tools Claude calls load fresh code on every run, while a long-running backend keeps
+    the old code in memory; after an update the two disagree until the backend is restarted.
+    """
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    current = MigrationContext.configure(db.connection()).get_current_revision()
+    if current != head:
+        raise OutdatedDatabaseError(
+            "The app was updated but the backend is still running the old version. Stop it and "
+            "start it again (it updates the database on start), then press Try again. "
+            "Nothing was read, so nothing was spent."
+        )
+
+
 def refresh_derived_data() -> None:
     """Rebuild everything that is derived from bank_transactions, then drop cached statistics.
 

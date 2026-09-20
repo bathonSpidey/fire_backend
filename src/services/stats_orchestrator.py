@@ -2,8 +2,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement, DBMonthlyStat
-from models.bank_statement import BankStatement
-from models.bank_transaction import BankTransaction
 from services.month_metrics import calculate_metrics
 from services.period_stats_engine import PeriodStatsEngine
 

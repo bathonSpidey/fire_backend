@@ -4,6 +4,11 @@ from pydantic import BaseModel
 class CategorySummary(BaseModel):
     total: float
     percentage_of_total: float
+    # Describes the category so the frontend never has to guess from its name
+    flow: str | None = None  # income | expense | investment
+    label: str | None = None
+    group: str | None = None
+    fixed: bool = False
 
 
 class MonthlyStatsResponse(BaseModel):

@@ -1,6 +1,5 @@
 # src/services/inventory_stats.py
 from collections import defaultdict
-from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 

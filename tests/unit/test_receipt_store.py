@@ -5,19 +5,20 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database.models import Base, DBInventoryItem, DBReceipt
-from models.inventory import ItemCategory, ReceiptLine, ReceiptSubmission, StorageCondition
+from models.inventory import ReceiptLine, ReceiptSubmission, StorageCondition
+from services.categories import category_map, seed_categories
 from services.receipt_store import find_problems, save_receipt
 
 TODAY = datetime.date(2026, 5, 1)
 
 
-def line(name, unit_price, qty=1, discount=0.0, category=ItemCategory.FOOD):
+def line(name, unit_price, qty=1, discount=0.0, category="groceries"):
     return ReceiptLine(
         name=name,
         quantity=qty,
         unit_price=unit_price,
         discount=discount,
-        category=category,
+        spend_category=category,
         storage_condition=StorageCondition.NORMAL,
     )
 
@@ -34,7 +35,7 @@ def kaufland_like(total=10.24):
             line("Hühner Frikassee", 2.22, qty=2),  # 4.44
             line("KFav.Röschentrilo", 1.99, discount=0.40),  # 1.59
             line("Müllermilch", 0.59, qty=3),  # 1.77
-            line("Pfandartikel", 0.25, qty=3, category=ItemCategory.DEPOSIT),  # 0.75
+            line("Pfandartikel", 0.25, qty=3, category="deposit"),  # 0.75
             line("Zitronen 500g", 1.69),  # 1.69 -> total 10.24
         ],
     )
@@ -45,6 +46,7 @@ def db():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as session:
+        seed_categories(session)
         yield session
 
 
@@ -67,7 +69,7 @@ def test_discount_as_negative_item_is_rejected():
 
 def test_deposit_refund_may_be_negative():
     sub = kaufland_like(total=9.99)
-    sub.items.append(line("Pfandrückgabe", -0.25, category=ItemCategory.DEPOSIT))
+    sub.items.append(line("Pfandrückgabe", -0.25, category="deposit"))
     assert find_problems(sub, today=TODAY) == []
 
 
@@ -135,3 +137,53 @@ def test_same_shop_day_total_but_different_bon_is_a_new_purchase(db):
     outcome = save_receipt(db, owner="Abir", source_path="b.pdf", file_hash="h2", sub=other)
     assert not outcome.duplicate
     assert db.query(DBReceipt).count() == 2
+
+
+def test_unknown_category_is_rejected_with_the_valid_keys(db):
+    sub = kaufland_like()
+    sub.items[0].spend_category = "food"  # not a key in the list
+    outcome = save_receipt(db, owner="Abir", source_path="x", file_hash="h", sub=sub)
+    assert not outcome.ok
+    assert "unknown category 'food'" in outcome.message and "groceries" in outcome.message
+    assert db.query(DBReceipt).count() == 0
+
+
+def test_income_category_cannot_be_used_on_a_purchase(db):
+    sub = kaufland_like()
+    sub.items[0].spend_category = "salary"
+    problems = find_problems(sub, today=TODAY, categories=category_map(db))
+    assert any("income category" in p for p in problems)
+
+
+def test_one_receipt_can_hold_several_categories_and_derives_the_pantry_category(db):
+    sub = kaufland_like()
+    sub.items[1].spend_category = "personal_care"
+    sub.items[4].spend_category = "furniture_decor"
+    outcome = save_receipt(db, owner="Abir", source_path="x", file_hash="h", sub=sub)
+    assert outcome.ok
+    rows = {i.name: (i.spend_category, i.category) for i in db.query(DBInventoryItem)}
+    assert rows["KFav.Röschentrilo"] == ("personal_care", "Cosmetics")
+    assert rows["Zitronen 500g"] == ("furniture_decor", "Living")
+    assert rows["Hühner Frikassee"] == ("groceries", "Food")
+
+
+def test_a_custom_category_is_accepted_once_it_exists(db):
+    from services.categories import create_category
+
+    create_category(db, label="Cat food", group_name="Shopping", description="Food for the cat")
+    sub = kaufland_like()
+    sub.items[0].spend_category = "cat_food"
+    assert save_receipt(db, owner="Abir", source_path="x", file_hash="h", sub=sub).ok
+    assert db.query(DBInventoryItem).filter_by(spend_category="cat_food").one().category == "Other"
+
+
+def test_a_review_note_flags_the_receipt_even_when_every_check_passes(db):
+    # e.g. a cropped screenshot with no visible date: Claude assumes today and says so
+    outcome = save_receipt(
+        db, owner="Abir", source_path="x", file_hash="h", sub=kaufland_like(total=10.24),
+        review_note="date not visible, assumed the upload day",
+    )
+    assert outcome.ok
+    receipt = db.get(DBReceipt, outcome.receipt_id)
+    assert receipt.status == "needs_review"
+    assert receipt.review_note == "date not visible, assumed the upload day"

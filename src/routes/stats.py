@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from database.models import DBBankStatement, DBMonthlyStat
 from database.session import get_db
-from models.bank_statement import BankStatement
 from models.financial_stats import MonthlyStatsResponse
 from services.month_metrics import calculate_metrics
 from services.period_stats_engine import PeriodStatsEngine

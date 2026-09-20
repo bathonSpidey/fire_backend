@@ -12,12 +12,10 @@ agent prompt replaced by the rules in prompts/*.md and only Read + this app's to
 """
 
 import calendar
+import datetime
 import json
-import os
 import pathlib
 import shutil
-import subprocess
-import sys
 import tempfile
 import time
 import uuid
@@ -26,14 +24,15 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from config import settings
+from database.migrate import ensure_schema_current
 from database.models import DBBankStatement, DBBankTransaction, DBReceipt, DBReviewQuestion
+from services.categories import prompt_block
+from services.claude_runner import SRC_DIR, ClaudeRun, run_claude
 from services.file_hash import source_files, source_sha256
 from services.linking import auto_pair_transfers
 from services.statement_store import MONTH_ABBR
 
-SRC_DIR = pathlib.Path(__file__).resolve().parent.parent
 PROMPTS = SRC_DIR / "prompts"
-MCP_SERVER = SRC_DIR / "mcp_server" / "fire_mcp.py"
 INBOX, FAILED, DUPLICATES = "_inbox", "_failed", "_duplicates"
 
 AUTO, RECEIPT, STATEMENT = "auto", "receipt", "statement"
@@ -68,18 +67,20 @@ KINDS = {
 }
 
 
-def rules_text(kind: str) -> str:
+def rules_text(kind: str, db: Session) -> str:
     """System prompt for a run. `auto` = router + both rule sets; Claude picks the section."""
     receipt = (PROMPTS / "receipt_rules.md").read_text(encoding="utf-8")
     statement = (PROMPTS / "statement_rules.md").read_text(encoding="utf-8")
+    categories = prompt_block(db)  # the household's current list, rebuilt for every run
     if kind == RECEIPT:
-        return receipt
+        return f"{receipt}\n\n{categories}"
     if kind == STATEMENT:
-        return statement
+        return f"{statement}\n\n{categories}"
     router = (PROMPTS / "router_rules.md").read_text(encoding="utf-8")
     return (
         f"{router}\n\n# RECEIPT RULES (only if the document is a receipt)\n\n{receipt}\n\n"
-        f"# STATEMENT RULES (only if the document is a bank statement)\n\n{statement}"
+        f"# STATEMENT RULES (only if the document is a bank statement)\n\n{statement}\n\n"
+        f"{categories}"
     )
 
 
@@ -159,55 +160,37 @@ def _move(src: pathlib.Path, dest_dir: pathlib.Path) -> pathlib.Path:
     return dest
 
 
-def _run_claude(kind: str, owner: str, doc: pathlib.Path, result_file: pathlib.Path, tmp: pathlib.Path):
+def move_back_to_inbox(src: pathlib.Path, owner: str) -> pathlib.Path:
+    """Put a document that failed (or never ran) back into the owner's inbox to be processed again."""
+    check_owner(owner)
+    if src.parent == inbox_dir(owner):
+        return src  # never left the inbox (e.g. the job failed before Claude ran)
+    dest = _move(src, inbox_dir(owner))
+    error_note = src.with_name(src.name + ".error.txt")
+    if error_note.exists():
+        error_note.unlink()
+    return dest
+
+
+def _run_claude(
+    kind: str, owner: str, doc: pathlib.Path, result_file: pathlib.Path, db: Session
+) -> ClaudeRun:
     spec = KINDS[kind]
-    mcp_config = {
-        "mcpServers": {
-            "fire": {
-                "command": sys.executable,
-                "args": [str(MCP_SERVER)],
-                "env": {
-                    "PYTHONPATH": str(SRC_DIR),
-                    "FIRE_DATABASE_URL": settings.FIRE_DATABASE_URL,
-                    "FIRE_OWNER": owner,
-                    "FIRE_SOURCE_FILE": str(doc),
-                    "FIRE_RESULT_FILE": str(result_file),
-                    "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-                },
-            }
-        }
-    }
-    config_path = tmp / "mcp.json"
-    config_path.write_text(json.dumps(mcp_config), encoding="utf-8")
-
-    cmd = [
-        shutil.which("claude") or "claude",
-        "-p",
-        "--model", settings.CLAUDE_MODEL,
-        "--effort", settings.CLAUDE_EFFORT,
-        "--system-prompt", rules_text(kind),
-        "--tools", "Read",
-        "--allowedTools", "Read", *spec["tools"],
-        "--strict-mcp-config", "--mcp-config", str(config_path),
-        "--permission-mode", "dontAsk",
-        "--no-session-persistence",
-        "--output-format", "json",
-    ]
-    env = os.environ.copy()
-    # Never let a stray API key silently switch billing away from the logged-in subscription.
-    env.pop("ANTHROPIC_API_KEY", None)
-
     files = source_files(doc)
-    prompt = "Process this document. Files, in order:\n" + "\n".join(f"- {f}" for f in files)
-    return subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=spec["timeout"](),
+    return run_claude(
+        system_prompt=rules_text(kind, db),
+        prompt=(
+            f"Today's date is {datetime.date.today().isoformat()}.\n"
+            "Process this document. Files, in order:\n" + "\n".join(f"- {f}" for f in files)
+        ),
+        tools=spec["tools"],
+        mcp_env={
+            "FIRE_OWNER": owner,
+            "FIRE_SOURCE_FILE": str(doc),
+            "FIRE_RESULT_FILE": str(result_file),
+        },
         cwd=doc if doc.is_dir() else doc.parent,  # Claude can only read from the inbox
-        env=env,
+        timeout=spec["timeout"](),
     )
 
 
@@ -251,6 +234,7 @@ def _known_document(db: Session, digest: str):
 def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> IngestResult:
     """Read `doc` (file or folder of files) with Claude and file it. `kind` is normally auto."""
     check_owner(owner)
+    ensure_schema_current(db)  # an out-of-date database must not cost a Claude run
     started = time.monotonic()
     root = settings.FIRE_WORKSPACE_ROOT
 
@@ -269,25 +253,14 @@ def ingest_document(kind: str, owner: str, doc: pathlib.Path, db: Session) -> In
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="fire_ingest_"))
     result_file = tmp / "result.json"
-    cost = turns = None
-    error_detail = ""
     outcome = None
     try:
-        proc = _run_claude(kind, owner, doc, result_file, tmp)
-        claude_text = proc.stdout
-        try:
-            payload = json.loads(proc.stdout)
-            cost, turns = payload.get("total_cost_usd"), payload.get("num_turns")
-            claude_text = str(payload.get("result", ""))
-        except json.JSONDecodeError:
-            pass
-        error_detail = (proc.stderr or claude_text)[-2000:]
-    except subprocess.TimeoutExpired:
-        error_detail = f"Timed out after {KINDS[kind]['timeout']()}s"
+        run = _run_claude(kind, owner, doc, result_file, db)
     finally:
         if result_file.exists():
             outcome = json.loads(result_file.read_text(encoding="utf-8"))
         shutil.rmtree(tmp, ignore_errors=True)
+    cost, turns, error_detail = run.cost_usd, run.turns, run.error_detail
 
     common = dict(cost_usd=cost, turns=turns, seconds=time.monotonic() - started)
 

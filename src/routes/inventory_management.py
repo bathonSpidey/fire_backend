@@ -1,10 +1,9 @@
 import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from database.inventory_db import InventoryDB
-from database.models import DBReceipt
 from database.session import get_db
 from models.inventory_management import InventoryUpdatePayload
 

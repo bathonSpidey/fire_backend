@@ -11,11 +11,13 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from database.models import DBInventoryItem, DBReceipt
-from models.inventory import ItemCategory, ReceiptSubmission
+from models.inventory import ReceiptSubmission
+from services.categories import category_map, legacy_item_category, validate_key
 
 # Rounding noise on receipts is at most a cent or two; more than this is a real misread.
 SUM_TOLERANCE_EUR = 0.02
 MAX_RECEIPT_AGE_DAYS = 366 * 5
+DEPOSIT_KEY = "deposit"
 
 
 @dataclass
@@ -26,7 +28,9 @@ class SaveOutcome:
     duplicate: bool = False
 
 
-def find_problems(sub: ReceiptSubmission, today: datetime.date | None = None) -> list[str]:
+def find_problems(
+    sub: ReceiptSubmission, today: datetime.date | None = None, categories: dict | None = None
+) -> list[str]:
     """Return human-readable problems; an empty list means the receipt is consistent."""
     today = today or datetime.date.today()
     problems: list[str] = []
@@ -43,7 +47,11 @@ def find_problems(sub: ReceiptSubmission, today: datetime.date | None = None) ->
         problems.append(f"total_amount {sub.total_amount} must be positive.")
 
     for line in sub.items:
-        if line.unit_price < 0 and line.category != ItemCategory.DEPOSIT:
+        if categories is not None:
+            problem = validate_key(categories, line.spend_category, "expense")
+            if problem:
+                problems.append(f"'{line.name}' {problem}.")
+        if line.unit_price < 0 and line.spend_category != DEPOSIT_KEY:
             problems.append(
                 f"'{line.name}' has a negative price but is not a Deposit line. "
                 "Discounts belong in the 'discount' field of the item above them."
@@ -98,17 +106,21 @@ def save_receipt(
             message=f"Already stored as receipt #{duplicate.id}. Nothing to do.",
         )
 
-    problems = find_problems(sub)
+    problems = find_problems(sub, categories=category_map(db))
     if problems and not review_note:
         return SaveOutcome(
             ok=False,
             message="NOT SAVED. Fix these and call save_receipt again:\n- " + "\n- ".join(problems),
         )
 
-    status = "needs_review" if problems else "ok"
+    # A note from Claude always means "a human should look", even if every check passed
+    # (e.g. the date was not visible on a cropped screenshot).
+    status = "needs_review" if (problems or review_note) else "ok"
     note = None
     if problems:
         note = f"{review_note} | checks failed: " + " ; ".join(problems)
+    elif review_note:
+        note = review_note
 
     receipt = DBReceipt(
         store_name=sub.store_name,
@@ -140,7 +152,8 @@ def save_receipt(
                 quantity=line.quantity,
                 unit_cost=line.unit_price,
                 discount=line.discount,
-                category=line.category.value,
+                category=legacy_item_category(line.spend_category),
+                spend_category=line.spend_category,
                 storage_condition=line.storage_condition.value,
                 date_purchased=sub.purchase_date,
                 date_expiry=expiry,

@@ -218,3 +218,99 @@ def test_group_hash_depends_on_content_and_order(tmp_path):
     assert source_sha256(one) == source_sha256(same)  # names do not matter, bytes and order do
     assert len({source_sha256(one), source_sha256(swapped), source_sha256(other)}) == 3
     assert [f.name for f in source_files(one)] == ["01_a.png", "02_b.png"]
+
+
+# ── an out-of-date database must not cost a Claude run ─────────────────────────────────────
+def test_outdated_database_is_refused_before_anything_is_read(tmp_path, monkeypatch):
+    from database.migrate import OutdatedDatabaseError, ensure_schema_current, upgrade_to_head
+    from services import document_ingest
+
+    url = f"sqlite:///{(tmp_path / 'old.db').as_posix()}"
+    monkeypatch.setattr(settings, "FIRE_DATABASE_URL", url)
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)  # tables exist but no migration history: behind the code
+    with sessionmaker(bind=engine)() as db:
+        with pytest.raises(OutdatedDatabaseError) as err:
+            ensure_schema_current(db)
+        assert "Nothing was read" in str(err.value)
+        called = []
+        monkeypatch.setattr(document_ingest, "_run_claude", lambda *a, **k: called.append(1))
+        doc = tmp_path / "bon.pdf"
+        doc.write_bytes(b"x")
+        monkeypatch.setattr(settings, "FIRE_OWNERS", ["Abir"])
+        with pytest.raises(OutdatedDatabaseError):
+            document_ingest.ingest_document("auto", "Abir", doc, db)
+        assert called == []  # Claude was never started
+
+    engine.dispose()
+    current_url = f"sqlite:///{(tmp_path / 'new.db').as_posix()}"
+    monkeypatch.setattr(settings, "FIRE_DATABASE_URL", current_url)
+    upgrade_to_head()
+    with sessionmaker(bind=create_engine(current_url))() as db:
+        ensure_schema_current(db)  # up to date: no error
+
+
+def test_worker_records_the_outdated_database_message_on_the_job(env):
+    from database.migrate import OutdatedDatabaseError
+
+    client, factory, _ = env
+    job_id = upload(client).json()["jobs"][0]["id"]
+
+    def refuse(kind, owner, file, db):
+        raise OutdatedDatabaseError("Restart the backend. Nothing was read, so nothing was spent.")
+
+    ingest_worker.process_job(job_id, factory, refuse)
+    job = client.get("/documents/jobs").json()[0]
+    assert job["status"] == "failed" and "Restart the backend" in job["message"]
+
+
+# ── Try again ──────────────────────────────────────────────────────────────────────────────
+def fail_job(client, factory):
+    job_id = upload(client).json()["jobs"][0]["id"]
+    ingest_worker.process_job(job_id, factory, lambda *a: (_ for _ in ()).throw(RuntimeError("boom")))
+    return job_id
+
+
+def test_retry_queues_a_new_auto_job_for_the_same_file(env, tmp_path):
+    client, factory, queued = env
+    old_id = fail_job(client, factory)
+    queued.clear()
+    new = client.post(f"/documents/jobs/{old_id}/retry").json()
+    assert new["kind"] == "auto" and new["status"] == "queued" and queued == [new["id"]]
+    assert (tmp_path / "_inbox" / "Abir" / "bon.pdf").exists()
+    jobs = {j["id"]: j for j in client.get("/documents/jobs").json()}
+    assert f"Retried as job #{new['id']}" in jobs[old_id]["message"]
+
+
+def test_retry_recovers_a_file_from_the_failed_folder_and_drops_its_error_note(env, tmp_path):
+    client, factory, _ = env
+    old_id = fail_job(client, factory)
+    failed_dir = tmp_path / "_failed" / "Abir"
+    failed_dir.mkdir(parents=True)
+    moved = failed_dir / "bon.pdf"
+    (tmp_path / "_inbox" / "Abir" / "bon.pdf").rename(moved)
+    (failed_dir / "bon.pdf.error.txt").write_text("why it failed")
+    with factory() as db:
+        job = db.get(DBIngestJob, old_id)
+        job.filed_path = str(moved)
+        db.commit()
+    new = client.post(f"/documents/jobs/{old_id}/retry").json()
+    assert (tmp_path / "_inbox" / "Abir" / "bon.pdf").read_bytes() == b"%PDF fake"
+    assert not moved.exists() and not (failed_dir / "bon.pdf.error.txt").exists()
+    assert new["status"] == "queued"
+
+
+def test_retry_rejects_jobs_that_cannot_or_should_not_be_retried(env, tmp_path):
+    client, factory, _ = env
+    assert client.post("/documents/jobs/999/retry").status_code == 404
+    waiting = upload(client).json()["jobs"][0]["id"]
+    assert client.post(f"/documents/jobs/{waiting}/retry").status_code == 409  # not failed
+
+    old_id = fail_job(client, factory)
+    assert client.post(f"/documents/jobs/{old_id}/retry").status_code == 202
+    assert client.post(f"/documents/jobs/{old_id}/retry").status_code == 409  # already retried
+
+    gone = fail_job(client, factory)
+    for f in (tmp_path / "_inbox" / "Abir").iterdir():
+        f.unlink()
+    assert "no longer available" in client.post(f"/documents/jobs/{gone}/retry").json()["detail"]

@@ -7,12 +7,16 @@ from sqlalchemy.orm import sessionmaker
 from database.models import Base, DBBankStatement, DBBankTransaction, DBReceipt, DBReviewQuestion
 from models.statement import Bank, StatementLine, StatementSubmission, TxKind
 from services import linking
+from services.categories import seed_categories
 from services.statement_store import find_problems, save_statement, statement_month
 
 D = datetime.date
 
 
-def line(day, amount, who="Kaufland", kind=TxKind.SPEND, month=4, purchase=None, desc=None):
+DEFAULT_CATEGORY = {TxKind.SPEND: "groceries", TxKind.INCOME: "salary", TxKind.REFUND: "refunds_returns"}
+
+
+def line(day, amount, who="Kaufland", kind=TxKind.SPEND, month=4, purchase=None, desc=None, category="default"):
     return StatementLine(
         booking_date=D(2026, month, day),
         purchase_date=purchase,
@@ -20,6 +24,7 @@ def line(day, amount, who="Kaufland", kind=TxKind.SPEND, month=4, purchase=None,
         counterparty=who,
         description=desc or f"{who} payment {day}.{month}",
         kind=kind,
+        category=DEFAULT_CATEGORY.get(kind) if category == "default" else category,
     )
 
 
@@ -54,6 +59,7 @@ def db():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as session:
+        seed_categories(session)
         yield session
 
 
@@ -340,3 +346,33 @@ def test_a_statement_with_only_a_closing_balance_is_still_partial(db):
     out = save(db, april(), file_hash="pdf")  # the complete statement may replace it
     assert out.ok and not out.duplicate
     assert db.query(DBBankStatement).one().status == "ok"
+
+
+# ── categories ────────────────────────────────────────────────────────────────────────────
+def test_unknown_or_missing_category_is_rejected(db):
+    out = save(db, april(txs=[line(8, -20.0, category="gasoline")], closing=980.0))
+    assert not out.ok and "unknown category 'gasoline'" in out.message
+    out = save(db, april(txs=[line(8, -20.0, category=None)], closing=980.0))
+    assert not out.ok and "missing a category" in out.message
+
+
+def test_income_and_expense_categories_are_not_interchangeable(db):
+    bad = april(txs=[line(8, -20.0, category="salary")], closing=980.0)
+    assert "income category" in save(db, bad).message
+
+
+def test_transfers_and_investments_are_stored_without_a_category(db):
+    sub = april(
+        txs=[line(8, -300.0, "Own", TxKind.INTERNAL_TRANSFER, category="groceries"),
+             line(9, -50.0, "Broker", TxKind.INVESTMENT, category="shopping_general")],
+        closing=650.0,
+    )
+    assert save(db, sub).ok
+    assert {t.category for t in db.query(DBBankTransaction)} == {None}
+
+
+def test_fees_and_cash_get_their_default_category(db):
+    sub = april(txs=[line(8, -5.0, "Bank", TxKind.FEE, category=None),
+                     line(9, -100.0, "ATM", TxKind.CASH, category=None)], closing=895.0)
+    assert save(db, sub).ok
+    assert {t.category for t in db.query(DBBankTransaction)} == {"bank_fees", "cash"}

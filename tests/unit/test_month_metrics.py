@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from database.models import Base, DBBankStatement, DBBankTransaction, DBMonthlyStat
 from models.statement import Bank, StatementLine, StatementSubmission, TxKind
 from services import linking
+from services.categories import delete_category, seed_categories, update_category
 from services.month_metrics import calculate_metrics
 from services.statement_store import save_statement
 
@@ -23,11 +24,11 @@ def line(day, amount, who, kind, category=None, month=4):
 
 def sparkasse():
     txs = [
-        line(24, 3000.0, "Employer", TxKind.INCOME, "SALARY"),
-        line(10, -400.0, "Kaufland", TxKind.SPEND, "GROCERIES"),
-        line(1, -40.0, "Gym", TxKind.SPEND, "FIXED_COSTS"),
+        line(24, 3000.0, "Employer", TxKind.INCOME, "salary"),
+        line(10, -400.0, "Kaufland", TxKind.SPEND, "groceries"),
+        line(1, -40.0, "Gym", TxKind.SPEND, "fitness"),
         line(2, -10.0, "Sparkasse", TxKind.FEE),
-        line(22, 100.0, "Finanzamt", TxKind.REFUND, "RETURNS"),
+        line(22, 100.0, "Finanzamt", TxKind.REFUND, "tax_refund"),
         line(24, -300.0, "Abir Bhattacharyya", TxKind.INTERNAL_TRANSFER),
         line(24, -120.0, "Abir Bhattacharyya fonds", TxKind.INVESTMENT),
         line(25, -50.0, "ATM", TxKind.CASH),
@@ -40,7 +41,7 @@ def sparkasse():
 
 def n26(with_transfer=True):
     txs = [line(7, -10.0, "N26 Equities", TxKind.INVESTMENT), line(9, -25.0, "N26 Equities", TxKind.INVESTMENT),
-           line(28, 0.19, "N26", TxKind.INCOME, "OTHER_INCOME")]
+           line(28, 0.19, "N26", TxKind.INCOME, "other_income")]
     if with_transfer:
         txs.append(line(24, 300.0, "Abir Bhattacharyya", TxKind.INTERNAL_TRANSFER))
     return StatementSubmission(
@@ -54,6 +55,7 @@ def db():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as session:
+        seed_categories(session)
         yield session
 
 
@@ -79,11 +81,14 @@ def test_investment_orders_are_never_listed_as_income_categories(db):
     save_statement(db, owner="Abir", source_path="b", file_hash="b", sub=n26())
     m = calculate_metrics(db, april(db), "Apr", 2026)
     assert set(m["categories"]) == {
-        "SALARY", "RETURNS", "OTHER_INCOME", "GROCERIES", "FIXED_COSTS", "CASH", "INVESTMENT_ORDER",
+        "salary", "tax_refund", "other_income", "groceries", "fitness", "bank_fees", "cash", "investments",
     }
-    assert m["categories"]["INVESTMENT_ORDER"]["total"] == 155.0
-    assert m["categories"]["FIXED_COSTS"]["total"] == 50.0  # gym + bank fee
-    assert m["categories"]["RETURNS"]["percentage_of_total"] == pytest.approx(3.23, abs=0.01)
+    assert m["categories"]["investments"]["total"] == 155.0
+    assert m["categories"]["investments"]["flow"] == "investment"  # never listed as income
+    assert m["categories"]["salary"]["flow"] == "income"
+    assert m["categories"]["groceries"]["label"] == "Groceries"
+    assert m["categories"]["tax_refund"]["percentage_of_total"] == pytest.approx(3.23, abs=0.01)
+    assert m["fixed_vs_variable_ratio"] == "10% Fixed / 90% Variable"  # gym 40 + bank fee 10 of 500
 
 
 def test_unpaired_transfer_is_still_not_counted_as_spending(db):
@@ -165,3 +170,19 @@ def test_auto_pair_ignores_amounts_too_far_apart_in_time(db):
     )
     save_statement(db, owner="Abir", source_path="b", file_hash="b", sub=late)
     assert linking.auto_pair_transfers(db) == 0
+
+
+def test_a_deleted_category_shows_up_as_uncategorized_not_as_nonsense(db):
+    save_statement(db, owner="Abir", source_path="a", file_hash="a", sub=sparkasse())
+    delete_category(db, "groceries")
+    m = calculate_metrics(db, april(db), "Apr", 2026)
+    assert "groceries" not in m["categories"]
+    assert m["categories"]["uncategorized"]["total"] == 400.0
+    assert m["categories"]["uncategorized"]["label"] == "Uncategorized"
+
+
+def test_the_fixed_cost_ratio_follows_the_category_setting(db):
+    save_statement(db, owner="Abir", source_path="a", file_hash="a", sub=sparkasse())
+    update_category(db, "groceries", fixed=True)  # 400 more counted as fixed
+    m = calculate_metrics(db, april(db), "Apr", 2026)
+    assert m["fixed_vs_variable_ratio"] == "90% Fixed / 10% Variable"

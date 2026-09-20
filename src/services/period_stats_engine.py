@@ -27,6 +27,7 @@ class PeriodStatsEngine:
 
         # Tracks running category sums across months
         category_accumulator: dict[str, float] = {}
+        category_meta: dict[str, dict] = {}
 
         for month_data in stats:
             # 1. FIX: Switch from dot-notation to dictionary keys 🔑
@@ -35,13 +36,16 @@ class PeriodStatsEngine:
             macro_invested += month_data["total_invested"]
 
             categories = month_data["categories"]
-            if "FIXED_COSTS" in categories:
-                macro_fixed += categories["FIXED_COSTS"]["total"]
 
             # Aggregate category sums safely
             for cat_name, cat_meta in categories.items():
+                if cat_meta.get("fixed"):
+                    macro_fixed += cat_meta["total"]
                 category_accumulator[cat_name] = (
                     category_accumulator.get(cat_name, 0.0) + cat_meta["total"]
+                )
+                category_meta.setdefault(
+                    cat_name, {k: cat_meta.get(k) for k in ("flow", "label", "group", "fixed")}
                 )
         # Recalculate Period-Wide Core Metrics
         net_savings = macro_income - macro_lifestyle
@@ -53,15 +57,19 @@ class PeriodStatsEngine:
         # Build formatted CategorySummary sub-objects
         categories_summary: dict[str, CategorySummary] = {}
         for cat, total in category_accumulator.items():
-            denominator = (
-                macro_income
-                if total > 0 and ("INCOME" in cat or cat == "SALARY")
-                else macro_lifestyle
+            meta = category_meta[cat]
+            denominator = {"income": macro_income, "investment": macro_invested}.get(
+                meta.get("flow"), macro_lifestyle
             )
             pct = (total / denominator * 100) if denominator > 0 else 0.0
 
             categories_summary[cat] = CategorySummary(
-                total=round(total, 2), percentage_of_total=round(pct, 2)
+                total=round(total, 2),
+                percentage_of_total=round(pct, 2),
+                flow=meta.get("flow"),
+                label=meta.get("label"),
+                group=meta.get("group"),
+                fixed=bool(meta.get("fixed")),
             )
 
         # Return a type-validated Pydantic Model instance
